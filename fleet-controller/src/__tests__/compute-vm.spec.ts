@@ -8,6 +8,7 @@ import {
   type ComputeRequest,
   type CreateGatewayVmInput,
 } from "../lib/compute-vm";
+import { readComputePreemption } from "../lib/compute-preemption.js";
 
 const IMAGE = { name: "octogee-computer-20260927", id: "222" };
 
@@ -75,12 +76,21 @@ const instance = (overrides: Record<string, unknown> = {}) => ({
 
 describe("ephemeral Compute writer exclusion", () => {
   const node = { providerId: "gce://octogee-test/us-west1-b/spot-node", instanceId: "170" };
+  const instance = { projectId: "octogee-test", zone: "us-west1-b", name: "spot-node", instanceId: "170" };
+  const window = { since: Date.parse("2026-11-24T01:00:00Z"), through: Date.parse("2026-11-24T02:00:00Z") };
+  const event = {
+    logName: "projects/octogee-test/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    timestamp: "2026-11-24T01:30:00.123Z",
+    resource: { type: "gce_instance", labels: { project_id: "octogee-test", zone: "us-west1-b", instance_id: "170" } },
+    protoPayload: { serviceName: "compute.googleapis.com", methodName: "compute.instances.preempted",
+      resourceName: "projects/octogee-test/zones/us-west1-b/instances/spot-node", status: { message: "Instance was preempted." } },
+  };
 
   it.each([
     { response: { status: 200, data: { id: "170", status: "TERMINATED" } }, excluded: false },
     { response: { status: 200, data: { id: "450", status: "RUNNING" } }, excluded: true },
     { response: { status: 200, data: {} }, excluded: false },
-    { response: http(404), excluded: true },
+    { response: http(404), excluded: false },
   ])("checks the observed zone and immutable instance identity (%o)", async ({ response, excluded }) => {
     const { request, calls } = fakeCompute(() => response);
     const { client } = clientWith(request);
@@ -94,6 +104,36 @@ describe("ephemeral Compute writer exclusion", () => {
     await expect(ephemeralComputeWriterExcluded("other-project", client, node)).resolves.toBe(false);
     expect(calls).toEqual([]);
     await expect(ephemeralComputeWriterExcluded("octogee-test", client, node)).rejects.toThrow("http 503");
+  });
+
+  it("excludes a missing Autopilot node only after reading its positive provider event", async () => {
+    const { request, calls } = fakeCompute(call => call.method === "GET" ? http(404) : { status: 200, data: { entries: [event] } });
+    const { client } = clientWith(request);
+    await expect(ephemeralComputeWriterExcluded("octogee-test", client, node,
+      candidate => readComputePreemption(request, candidate, window))).resolves.toBe(true);
+    expect(calls[1]).toMatchObject({ url: "https://logging.googleapis.com/v2/entries:list", method: "POST", body: {
+      resourceNames: ["projects/octogee-test"], orderBy: "timestamp desc",
+      filter: expect.stringContaining('resource.labels.instance_id="170"'),
+    } });
+  });
+
+  it.each([
+    ["a different immutable ID", { ...event, resource: { ...event.resource, labels: { ...event.resource.labels, instance_id: "171" } } }],
+    ["a preemption before allocation", { ...event, timestamp: "2026-11-23T23:30:00Z" }],
+    ["a preemption after the observation", { ...event, timestamp: "2026-11-24T02:02:00Z" }],
+    ["an application log", { ...event, logName: "projects/octogee-test/logs/application" }],
+    ["a different Compute event", { ...event, protoPayload: { ...event.protoPayload, methodName: "compute.instances.preempt" } }],
+    ["a failed event", { ...event, protoPayload: { ...event.protoPayload, status: { code: 7 } } }],
+    ["a different named instance", { ...event, protoPayload: { ...event.protoPayload, resourceName: `${event.protoPayload.resourceName}-other` } }],
+    ["a malformed event", null],
+  ])("refuses %s as preemption evidence", async (_description, candidate) => {
+    const request = vi.fn(async () => ({ status: 200, data: { entries: [candidate] } }));
+    await expect(readComputePreemption(request, instance, window)).resolves.toBe(false);
+  });
+
+  it("keeps the writer excluded only by positive evidence when logging is unavailable", async () => {
+    const request = vi.fn(async () => ({ status: 503 }));
+    await expect(readComputePreemption(request, instance, window)).rejects.toThrow("audit lookup returned HTTP 503");
   });
 });
 

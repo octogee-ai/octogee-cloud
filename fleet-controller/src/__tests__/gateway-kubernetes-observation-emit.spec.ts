@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 
-import { observeGatewayKubernetes, persistKubernetesObservations } from "../gateway-kubernetes-observation.js";
+import { observeGatewayKubernetes, persistKubernetesObservations, type GatewayPodDiagnostics } from "../gateway-kubernetes-observation.js";
 
 const RS = { uid: "rs-live", name: "octogee-gateway-shared-a-98d6b8cd7", desiredReplicas: 1, observedReplicas: 0 };
 
@@ -113,19 +113,22 @@ it.each([true, false])("remembers an exact terminal Pod with node identity avail
   ]);
   const store = createDocumentFixtureStore(documents);
   const checkCompute = vi.fn(async () => false);
-  const check = (writerTerminated?: true) => observeGatewayKubernetes({
+  const check = (diagnostics: GatewayPodDiagnostics) => observeGatewayKubernetes({
     store, namespace: "octogee-test", now: 4_000, log: vi.fn(), gatewayIds: [gatewayId],
     runtimes: [{ gatewayId, runtime: "cluster", kubernetes: undefined }],
-    readGatewayPodDiagnosticsBatch: async () => ({
-      [gatewayId]: { status: "not-ready", totalPods: 1, readyPods: 0,
-        pods: [{ ...pod, deleting: true, writerTerminated }] },
-    }),
+    readGatewayPodDiagnosticsBatch: async () => ({ [gatewayId]: diagnostics }),
     observeEphemeralNodeExclusion: checkCompute,
   });
 
-  await check();
+  const visible = { status: "not-ready", totalPods: 1, readyPods: 0 };
+  await check({ ...visible, pods: [{ ...pod, deleting: true }] });
+  expect(checkCompute).not.toHaveBeenCalled();
+  await check({ status: "missing", totalPods: 0, readyPods: 0, pods: [] });
+  if (withNode) expect(checkCompute).toHaveBeenCalledExactlyOnceWith(node, { since: 1, through: 4_000 });
+  else expect(checkCompute).not.toHaveBeenCalled();
   expect((await store.gateways.roots.get(gatewayId))?.ephemeralWriter?.exclusion).toBeUndefined();
-  await check(true);
+  checkCompute.mockClear();
+  await check({ ...visible, pods: [{ ...pod, deleting: true, writerTerminated: true }] });
   expect((await store.gateways.roots.get(gatewayId))?.ephemeralWriter?.exclusion).toEqual({
     at: 4_000, method: "terminal-pod",
   });
