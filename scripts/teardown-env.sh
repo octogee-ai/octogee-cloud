@@ -639,6 +639,9 @@ quiesce_platform_state_writers() {
   kubectl delete job -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
     -l "app in (platform-state-expiry,platform-state-migrate)" --ignore-not-found=true --wait=true >/dev/null \
     || die "could not remove platform state jobs before the platform database reset"
+  kubectl delete pod -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
+    -l "app in (platform-state-expiry,platform-state-migrate)" --ignore-not-found=true --wait=true >/dev/null \
+    || die "could not remove platform state database tunnel pods before the platform database reset"
   pods=$(kubectl get pods -n "$K8S_NAMESPACE" --context "$K8S_CONTEXT" \
     -l "app in ($PLATFORM_STATE_WRITERS)" -o name) \
     || die "could not inspect platform state writer pods before the platform database reset"
