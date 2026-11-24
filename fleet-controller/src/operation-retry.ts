@@ -79,7 +79,7 @@ const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
 ];
 
 const DETERMINISTIC_REFUSAL_PATTERNS: readonly RegExp[] = [
-  /\/finish-rsync-import\/\S+: 500 \{"error":"import failed","message":"carried agent (?:roster does not match migration authority|is not authorized: [^"]+)"\}/,
+  /\/finish-rsync-import\/\S+: 500 \{"error":"import failed","message":"carried agent (?:roster does not match migration authority(?:: [^"]+)?|is not authorized: [^"]+)"\}/,
 ];
 
 export function classifyOperationFailure(
