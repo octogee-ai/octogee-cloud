@@ -1196,6 +1196,20 @@ describe("full teardown for private-only Cloud SQL", { timeout: 180_000 }, () =>
     expect(result.calls.some((call) => call.startsWith("run services delete"))).toBe(false);
   });
 
+  it("keeps every Cloud Function an env extension asks the full teardown to preserve", () => {
+    const result = runPrivateCentralTeardown({
+      envExtension: "ENV_TEARDOWN_PRESERVED_FUNCTIONS+=(onMonitoringAlert)\n",
+      functions: [
+        { name: "onMonitoringAlert", generation: "GEN_2" },
+        { name: "onSignup", generation: "GEN_2" },
+      ],
+    });
+
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(result.calls.some((call) => call.startsWith("functions delete onSignup "))).toBe(true);
+    expect(result.calls.some((call) => call.startsWith("functions delete onMonitoringAlert "))).toBe(false);
+  });
+
   it("aborts an interactive full reset when a required wipe is declined", () => {
     const result = runPrivateCentralTeardown({ interactiveInput: "y\ny\nn\ny\ny\n" });
 
