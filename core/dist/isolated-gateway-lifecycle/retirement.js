@@ -267,14 +267,16 @@ function resumedReturnFlushedSource(operation, destinationEpoch) {
     const handoff = operation.schedulerHandoff;
     const forward = handoff?.forwardRecovery;
     const claim = readSchedulerMigrationIdentity(operation.id, handoff?.migrationId);
+    if (!handoff || !forward || !claim || destinationEpoch === null)
+        return false;
     return [
         operation.kind === "migrate-user", operation.rolledBack !== true, operation.cutoverCommittedAt !== undefined,
-        handoff?.uid === operation.input.uid, handoff?.slug === operation.input.userSlug,
-        handoff?.fromGatewayId === operation.input.fromGatewayId, handoff?.toGatewayId === operation.input.toGatewayId,
-        forward?.schemaVersion === 1, forward?.phase === "source-flushed",
-        Number.isSafeInteger(destinationEpoch), (destinationEpoch ?? 0) > 0, forward?.sourceEpoch === (destinationEpoch ?? 0) - 1,
-        claim !== null, (claim?.attempt ?? 0) <= (operation.attempts ?? 0),
-        claim !== null && claim.claimStartedAt >= (operation.firstStartedAt ?? Infinity) && claim.claimStartedAt < (operation.startedAt ?? 0),
+        handoff.uid === operation.input.uid, handoff.slug === operation.input.userSlug,
+        handoff.fromGatewayId === operation.input.fromGatewayId, handoff.toGatewayId === operation.input.toGatewayId,
+        forward.schemaVersion === 1, forward.phase === "source-flushed",
+        Number.isSafeInteger(destinationEpoch), destinationEpoch > 0, forward.sourceEpoch === destinationEpoch - 1,
+        claim.attempt <= (operation.attempts ?? 0),
+        claim.claimStartedAt >= (operation.firstStartedAt ?? Infinity), claim.claimStartedAt < (operation.startedAt ?? 0),
     ].every(Boolean);
 }
 function hasVerifiedReturnSteps(operation, destinationEpoch) {
