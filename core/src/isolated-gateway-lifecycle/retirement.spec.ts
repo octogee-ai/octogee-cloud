@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { builderActivateOperationId } from "@octogee/shared/types/isolated-operation-ids";
+import { builderActivateOperationId, builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { SourceRecoveryPendingError } from "../placement-refusal.js";
 import {
   checkUnreachableRecoveryFence,
@@ -201,6 +201,40 @@ describe("owned isolated gateway retirement", () => {
       kind: "retire-gateway", status: "pending", origin: "automatic", createdBy: "glm-controller-placement-policy",
       input: { gatewayId: GATEWAY, uid: "uid-alice", userSlug: "alice", reason: "builder-returned" },
     });
+  });
+
+  it.each([
+    { checkpoint: "matching", expected: true },
+    { checkpoint: "foreign-claim", expected: false },
+    { checkpoint: "wrong-epoch", expected: false },
+    { checkpoint: "unverified-target", expected: false },
+  ])("validates a $checkpoint resumed Hobby return before retiring the source", async ({ checkpoint, expected }) => {
+    const returnId = builderReturnOperationId(GATEWAY, 1);
+    const target = "shared-blue";
+    const h = harness({
+      [`gateways/${GATEWAY}`]: isolatedRoot({ desiredStatus: "paused", allocation: {
+        kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-one", generation: 1, claimedByUid: "uid-alice", ephemeralHomeGiB: 4,
+      } }),
+      [`glmOperations/${returnId}`]: {
+        kind: "migrate-user", status: "succeeded", origin: "automatic", createdBy: "glm-controller-placement-policy",
+        createdAt: 100, firstStartedAt: 150, startedAt: 500, completedAt: 900, cutoverCommittedAt: 800, attempts: 1,
+        input: { uid: "uid-alice", userSlug: "alice", fromGatewayId: GATEWAY, toGatewayId: target },
+        schedulerHandoff: {
+          uid: "uid-alice", slug: "alice", fromGatewayId: GATEWAY, toGatewayId: target,
+          migrationId: `mig-${checkpoint === "foreign-claim" ? "other-operation" : returnId}:scheduler:1:claim:150`,
+          scheduleTransfer: true,
+          forwardRecovery: { schemaVersion: 1, phase: "source-flushed", sourceEpoch: checkpoint === "wrong-epoch" ? 2 : 3 },
+        },
+        steps: [
+          { name: "final-sync-state", status: "done", startedAt: 550, completedAt: 650 },
+          { name: "verify-target", status: checkpoint === "unverified-target" ? "failed" : "done", startedAt: 660, completedAt: 700 },
+          { name: "cutover-firestore", status: "done", startedAt: 710, completedAt: 810 },
+        ],
+      },
+    });
+
+    await expect(retireOwnedIsolatedGateway(h.deps, { ...retire, authoritativeGatewayId: target })).resolves.toMatchObject({ retired: expected });
+    expect(h.docs.has(`glmOperations/${RETIREMENT}`)).toBe(expected);
   });
 
   it("answers the blocking reason and writes nothing when the allocation changed", async () => {

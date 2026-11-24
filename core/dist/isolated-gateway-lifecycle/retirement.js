@@ -1,4 +1,5 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
+import { readSchedulerMigrationIdentity } from "@octogee/shared/types/glm";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
 import { builderReturnOperationId, isolatedRecoverOperationId, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
 import { GatewayRetirementConflictError, claimGatewayRetirementInStore, } from "../gateway-retirement-claim.js";
@@ -223,7 +224,7 @@ export function retirementAuthorityFenceAllows(input) {
 }
 async function assertRetirementAuthorityFence(transaction, request) {
     if (!request.authoritativeGatewayId)
-        return;
+        return null;
     const [userRecord, assignment] = await Promise.all([
         transaction.users.records.get(request.uid),
         transaction.gateways.assignments.get(request.authoritativeGatewayId, request.uid),
@@ -240,6 +241,7 @@ async function assertRetirementAuthorityFence(transaction, request) {
     })) {
         throw new GatewayRetirementConflictError(`User ${request.uid} is no longer authoritatively returned to ${request.authoritativeGatewayId}`);
     }
+    return assignment?.epoch ?? null;
 }
 function zeroWorkloadRecoveryReceiptMatches(recovery, request) {
     const recoveryInput = recovery?.input;
@@ -261,17 +263,34 @@ async function assertZeroWorkloadRecoveryReceipt(transaction, request) {
         throw new GatewayRetirementConflictError(`gateway ${request.gatewayId} zero-workload recovery receipt is unavailable`);
     }
 }
-function hasVerifiedReturnSteps(operation) {
+function resumedReturnFlushedSource(operation, destinationEpoch) {
+    const handoff = operation.schedulerHandoff;
+    const forward = handoff?.forwardRecovery;
+    const claim = readSchedulerMigrationIdentity(operation.id, handoff?.migrationId);
+    if (!handoff || !forward || !claim || destinationEpoch === null)
+        return false;
+    return [
+        operation.kind === "migrate-user", operation.rolledBack !== true, operation.cutoverCommittedAt !== undefined,
+        handoff.uid === operation.input.uid, handoff.slug === operation.input.userSlug,
+        handoff.fromGatewayId === operation.input.fromGatewayId, handoff.toGatewayId === operation.input.toGatewayId,
+        forward.schemaVersion === 1, forward.phase === "source-flushed",
+        Number.isSafeInteger(destinationEpoch), destinationEpoch > 0, forward.sourceEpoch === destinationEpoch - 1,
+        claim.attempt <= (operation.attempts ?? 0),
+        claim.claimStartedAt >= (operation.firstStartedAt ?? Infinity), claim.claimStartedAt < (operation.startedAt ?? 0),
+    ].every(Boolean);
+}
+function hasVerifiedReturnSteps(operation, destinationEpoch) {
     const steps = operation.steps ?? [];
     const carriedSteps = (operation.attemptHistory ?? []).flatMap(attempt => attempt.steps);
     if (operation.input.durableRecovery === true) {
         const required = ["exclude-old-writer", "restore-target", "stage-durable-scheduler", "verify-target", "activate-scheduler", "cutover-firestore"];
         return required.every(name => [...steps, ...carriedSteps].some(step => step.name === name && step.status === "done"));
     }
-    return ["flush-source", "final-sync-state", "verify-target", "cutover-firestore"]
-        .every(name => steps.some(step => step.name === name && step.status === "done"));
+    const done = (name) => steps.some(step => step.name === name && step.status === "done");
+    return ["final-sync-state", "verify-target", "cutover-firestore"].every(done) &&
+        (done("flush-source") || resumedReturnFlushedSource(operation, destinationEpoch));
 }
-async function assertEphemeralReturnVerified(tx, request) {
+async function assertEphemeralReturnVerified(tx, request, destinationEpoch) {
     if (!["builder-returned", "operator-terminated"].includes(request.reason))
         return;
     if ((await tx.gateways.roots.get(request.gatewayId))?.allocation?.ephemeralHomeGiB === undefined)
@@ -281,7 +300,7 @@ async function assertEphemeralReturnVerified(tx, request) {
         throw refusal();
     const operation = await tx.journal.operations.get(builderReturnOperationId(request.gatewayId, request.generation));
     if (operation?.status !== "succeeded" || operation.input.uid !== request.uid || operation.input.fromGatewayId !== request.gatewayId ||
-        operation.input.toGatewayId !== request.authoritativeGatewayId || !hasVerifiedReturnSteps(operation))
+        operation.input.toGatewayId !== request.authoritativeGatewayId || !hasVerifiedReturnSteps(operation, destinationEpoch))
         throw refusal();
 }
 async function readRetirementTelemetryFence(input, request) {
@@ -356,8 +375,8 @@ export async function retireOwnedIsolatedGateway(input, request, mode = "apply")
                 }
                 if (sizing)
                     await assertIdleRetirementObservation(transaction, root, request, sizing);
-                await assertRetirementAuthorityFence(transaction, request);
-                await assertEphemeralReturnVerified(transaction, request);
+                const destinationEpoch = await assertRetirementAuthorityFence(transaction, request);
+                await assertEphemeralReturnVerified(transaction, request, destinationEpoch);
                 await assertZeroWorkloadRecoveryReceipt(transaction, request);
                 await assertActivationSourceRecoveryReleased(input, transaction, {
                     targetGatewayId: request.gatewayId,
