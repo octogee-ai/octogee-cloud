@@ -363,9 +363,6 @@ describe("binary diversion on the commit path", () => {
         paths: ["big.zip"],
       });
 
-    expect(h.warn).toHaveBeenCalledWith(
-      expect.stringContaining("blob diversion incomplete slug=acme"),
-    );
     expect(h.commitAndPushWorkspace).toHaveBeenCalledOnce();
   });
 });

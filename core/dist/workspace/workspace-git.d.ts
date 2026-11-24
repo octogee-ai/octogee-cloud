@@ -29,6 +29,7 @@ export type WorkspaceGitError = {
     code: "INTERNAL";
     message: string;
 };
+export declare const OPENCLAW_WORKSPACE_SCRATCH_PATH = ".openclaw/tmp";
 export interface WorkspaceGitStatusEntry {
     path: string;
     change: "modified" | "added" | "deleted" | "untracked" | "renamed";

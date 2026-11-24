@@ -21,13 +21,9 @@ function blobTarget(slug, project) {
     };
 }
 async function divertBinaries(dir, slug, project) {
-    const result = project
-        ? await divertWorktreeBinaries(dir, blobTarget(slug, project), undefined, { retainLocalFiles: true })
-        : await divertWorktreeBinaries(dir, blobTarget(slug, project), undefined, { excludePaths: [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] });
-    if (result.failures.length > 0) {
-        logger.warn(`internal/workspace/commit: blob diversion incomplete slug=${slug}: ${result.failures.join("; ")}`);
-    }
-    return result;
+    return project
+        ? divertWorktreeBinaries(dir, blobTarget(slug, project), undefined, { retainLocalFiles: true })
+        : divertWorktreeBinaries(dir, blobTarget(slug, project), undefined, { excludePaths: [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] });
 }
 function gitErrorDetail(error) {
     switch (error.code) {

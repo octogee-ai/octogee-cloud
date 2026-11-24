@@ -13,6 +13,7 @@ const END_OF_OPTIONS = "--end-of-options";
 const RECORD_SEPARATOR = String.fromCharCode(0x1e);
 const UNIT_SEPARATOR = String.fromCharCode(0x1f);
 const NUL = String.fromCharCode(0x00);
+export const OPENCLAW_WORKSPACE_SCRATCH_PATH = ".openclaw/tmp";
 const SAFE_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
 export function isSafeSlug(slug) {
     return SAFE_SLUG_RE.test(slug);
@@ -131,7 +132,7 @@ async function stageWorkspaceCommit(customerDir, excludePaths) {
     }
     const identity = userGitIdentity(customerDir);
     const workspace = identity && path.resolve(customerDir) === path.join(identity.usersRoot, identity.slug);
-    const excluded = [...new Set([...excludePaths, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
+    const excluded = [...new Set([...excludePaths, OPENCLAW_WORKSPACE_SCRATCH_PATH, ...(workspace ? [PROJECT_AGENT_WORKSPACE_PARTS.join("/")] : [])])];
     const reserved = checkpoint || isTrustedGithubUserCheckout(customerDir) ? GITHUB_PROJECT_METADATA_PATHS : [];
     const staged = await stageWorkspaceChanges(customerDir, excluded, reserved);
     if (!staged.ok)

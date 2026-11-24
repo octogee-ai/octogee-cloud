@@ -16,6 +16,7 @@ import {
   type DivertBinariesDeps,
 } from "./binary-diversion.js";
 import type { WorkspaceGitStatusEntry } from "./workspace-git.js";
+import { logger } from "../http/logging.js";
 
 const dirs: string[] = [];
 
@@ -241,6 +242,25 @@ describe("divertWorktreeBinaries", () => {
       storeWorkspaceBlob: vi.fn() as unknown as DivertBinariesDeps["storeWorkspaceBlob"],
     });
     expect(result.failures).toEqual(["git status failed: GIT_FAILED"]);
+  });
+
+  it("logs each path it could not save and why", async () => {
+    const dir = await workspace();
+    await symlink("/etc", path.join(dir, "linked"));
+    const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
+
+    const result = await divertWorktreeBinaries(
+      dir,
+      target,
+      deps([{ path: "linked/hosts", change: "untracked" }]),
+    );
+
+    expect(result.failedPaths).toEqual(["linked/hosts"]);
+    expect(error).toHaveBeenCalledWith("workspace binary diversion failed", {
+      cwd: dir,
+      failures: result.failures,
+    });
+    expect(result.failures[0]).toMatch(/^linked\/hosts: .+/);
   });
 
   linuxTest("rejects an oversize blob without reading it into memory", async () => {
