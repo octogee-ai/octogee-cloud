@@ -3339,11 +3339,12 @@ function installGatewayCheckpointRoutes(router: Router, { store, now }: Resolved
       return;
     }
     await runBrokered(res, async () => {
-      const accepted = snapshot
+      const result = snapshot
         ? await recordGatewayScheduleCheckpoint({ ...scope, snapshot })
         : await recordGatewayWorkspaceCheckpoint({ ...scope, commits: commits! });
-      if (!accepted) {
-        res.status(409).json({ error: `${kind}_checkpoint_writer_conflict` });
+      if (result !== "accepted") {
+        logger.warn(`${kind} checkpoint refused`, { gatewayId, uid, podName, reason: result });
+        res.status(409).json({ error: `${kind}_checkpoint_writer_conflict`, reason: result });
         return;
       }
       res.status(204).end();

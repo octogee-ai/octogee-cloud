@@ -1,11 +1,18 @@
 import { parseAgentId } from "@octogee/shared/types/identity";
-import type { NativeScheduleCheckpoint } from "@octogee/shared/types/fleet-controller";
+import { GATEWAY_UNREACHABLE_AFTER_MS, type NativeScheduleCheckpoint } from "@octogee/shared/types/fleet-controller";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 import { sameEphemeralWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
-import type { EphemeralGatewayWriter, FleetRegistryRecord, GatewayAssignment, GatewayRoot, PlatformStateStore, PlatformUserRecord } from "./platform-state/index.js";
+import type { EphemeralGatewayWriter, FleetRegistryRecord, GatewayAssignment, GatewayRoot, OperationRecord, PlatformStateStore, PlatformStateTransaction, PlatformUserRecord, Stored } from "./platform-state/index.js";
 
-const MAX_OBSERVATION_AGE_MS = 120_000;
 const MAX_CHECKPOINT_AGE_MS = 60_000;
+
+export type GatewayCheckpointRefusal =
+  | "report_stale" | "gateway_missing" | "user_missing" | "assignment_missing" | "gateway_not_serving"
+  | "ephemeral_writer_mismatch" | "vm_writer_mismatch" | "kubernetes_writer_unobserved"
+  | "kubernetes_observation_stale" | "kubernetes_writer_mismatch" | "assignment_not_owned"
+  | "assignment_not_serving" | "user_fenced" | "foreign_schedules";
+
+export type GatewayCheckpointResult = "accepted" | GatewayCheckpointRefusal;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -42,27 +49,29 @@ function allowsUserCheckpoint(root: GatewayRoot): boolean {
   return canServe && !root.retirementClaim && !root.runtimeRestartFence;
 }
 
-function servingScheduleWriter(root: GatewayRoot, runtime: FleetRegistryRecord | null, pod: EphemeralGatewayWriter, now: number): boolean {
-  if (!allowsUserCheckpoint(root)) return false;
+function scheduleWriterRefusal(
+  root: GatewayRoot, runtime: FleetRegistryRecord | null, pod: EphemeralGatewayWriter, now: number,
+): GatewayCheckpointRefusal | null {
+  if (!allowsUserCheckpoint(root)) return "gateway_not_serving";
   if (root.allocation?.ephemeralHomeGiB !== undefined) {
-    return !root.ephemeralWriter?.exclusion && sameEphemeralWriter(root.ephemeralWriter, pod);
+    return !root.ephemeralWriter?.exclusion && sameEphemeralWriter(root.ephemeralWriter, pod) ? null : "ephemeral_writer_mismatch";
   }
   if (runtime?.runtime === "gce-vm") {
     return runtime.vm?.status === "RUNNING" && runtime.vm.instanceId === pod.podUid &&
-      gatewayVmPodName(root.gatewayId, pod.podUid) === pod.podName;
+      gatewayVmPodName(root.gatewayId, pod.podUid) === pod.podName ? null : "vm_writer_mismatch";
   }
-  return isSoleObservedClusterWriter(runtime?.kubernetes, pod, now);
+  return soleObservedClusterWriterRefusal(runtime?.kubernetes, pod, now);
 }
 
-function isSoleObservedClusterWriter(
+function soleObservedClusterWriterRefusal(
   observation: FleetRegistryRecord["kubernetes"],
   pod: EphemeralGatewayWriter,
   now: number,
-): boolean {
-  if (observation?.status !== "ready" || observation.totalPods !== 1 || observation.readyPods !== 1) return false;
-  if (observation.observedAt > now || now - observation.observedAt > MAX_OBSERVATION_AGE_MS) return false;
+): GatewayCheckpointRefusal | null {
+  if (observation?.status !== "ready" || observation.totalPods !== 1 || observation.readyPods !== 1) return "kubernetes_writer_unobserved";
+  if (observation.observedAt > now || now - observation.observedAt > GATEWAY_UNREACHABLE_AFTER_MS) return "kubernetes_observation_stale";
   const [observed, ...otherPods] = observation.pods ?? [];
-  return otherPods.length === 0 && observed?.uid === pod.podUid && observed.name === pod.podName;
+  return otherPods.length === 0 && observed?.uid === pod.podUid && observed.name === pod.podName ? null : "kubernetes_writer_mismatch";
 }
 
 function schedulesBelongTo(slug: string, snapshot: NativeScheduleCheckpoint): boolean {
@@ -93,9 +102,49 @@ function ownsAssignment(user: PlatformUserRecord, assignment: GatewayAssignment,
     assignment.slug === user.slug && assignment.epoch === input.assignmentEpoch;
 }
 
-function canPublishWorkspace(user: PlatformUserRecord, assignment: GatewayAssignment): boolean {
-  return (assignment.state === "serving" || assignment.state === "quiescing") &&
-    Object.keys(user.fences).every(fence => fence === "migration");
+function completedOwnRetirement(
+  user: PlatformUserRecord, retirement: Record<string, unknown>,
+): retirement is Record<string, unknown> & { returnOperationId: string } {
+  const { uid, slug, completedAt, cutoverCommittedAt, returnOperationId } = retirement;
+  return uid === user.uid && slug === user.slug && typeof returnOperationId === "string" && returnOperationId.length > 0 &&
+    typeof cutoverCommittedAt === "number" && Number.isFinite(cutoverCommittedAt) && cutoverCommittedAt > 0 &&
+    typeof completedAt === "number" && Number.isFinite(completedAt) && completedAt >= cutoverCommittedAt;
+}
+
+function returnOperationCompletes(operation: OperationRecord | null, retirement: Record<string, unknown>): boolean {
+  if (operation === null) return true;
+  return operation.kind === "migrate-user" && operation.status === "succeeded" &&
+    operation.cutoverCommittedAt === retirement.cutoverCommittedAt && operation.input?.uid === retirement.uid &&
+    operation.input.fromGatewayId === retirement.sourceGatewayId && operation.input.toGatewayId === retirement.sharedGatewayId;
+}
+
+async function activeFences(tx: PlatformStateTransaction, user: PlatformUserRecord): Promise<string[]> {
+  const { pendingNativeSchedulerRetirement: retirement, ...fences } = user.fences;
+  const dormant = retirement === undefined || (completedOwnRetirement(user, retirement) &&
+    returnOperationCompletes(await tx.journal.operations.get(retirement.returnOperationId), retirement));
+  return [...Object.keys(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
+}
+
+type CheckpointOwner = { user: Stored<PlatformUserRecord>; assignment: GatewayAssignment };
+
+async function checkpointOwner(
+  tx: PlatformStateTransaction, input: GatewayCheckpointScope,
+): Promise<CheckpointOwner | GatewayCheckpointRefusal> {
+  const { gatewayId, uid } = input;
+  const [root, runtime, user, assignment] = await Promise.all([
+    tx.gateways.roots.get(gatewayId), tx.fleetRegistry.get(gatewayId),
+    tx.users.records.get(uid), tx.gateways.assignments.get(gatewayId, uid),
+  ]);
+  if (!root) return "gateway_missing";
+  if (!user) return "user_missing";
+  if (!assignment) return "assignment_missing";
+  const refusal = scheduleWriterRefusal(root, runtime, input.pod, input.now) ??
+    (ownsAssignment(user, assignment, input) ? null : "assignment_not_owned");
+  return refusal ?? { user, assignment };
+}
+
+function staleReport({ observedAt, now }: GatewayCheckpointScope): boolean {
+  return !Number.isSafeInteger(observedAt) || observedAt > now + 5_000 || now - observedAt > MAX_CHECKPOINT_AGE_MS;
 }
 
 function alreadyCaptured(
@@ -106,25 +155,21 @@ function alreadyCaptured(
     last.observedAt >= input.observedAt;
 }
 
-export async function recordGatewayScheduleCheckpoint(input: CheckpointRequest): Promise<boolean> {
-  const { store, gatewayId, uid, assignmentEpoch, pod, now, observedAt, snapshot } = input;
-  if (!Number.isSafeInteger(observedAt) || observedAt > now + 5_000 || now - observedAt > MAX_CHECKPOINT_AGE_MS) return false;
-  return store.transaction({ label: "gateway-schedule-checkpoint.record" }, async tx => {
-    const [root, runtime, user, assignment] = await Promise.all([
-      tx.gateways.roots.get(gatewayId), tx.fleetRegistry.get(gatewayId),
-      tx.users.records.get(uid), tx.gateways.assignments.get(gatewayId, uid),
-    ]);
-    if (!root || !user || !assignment || !servingScheduleWriter(root, runtime, pod, now)) return false;
-    if (!ownsAssignment(user, assignment, input) || assignment.state !== "serving" ||
-        Object.keys(user.fences).length || !schedulesBelongTo(assignment.slug, snapshot)) return false;
-    if (alreadyCaptured(user.scheduleCheckpoint, input)) return true;
+export async function recordGatewayScheduleCheckpoint(input: CheckpointRequest): Promise<GatewayCheckpointResult> {
+  const { store, gatewayId, uid, assignmentEpoch, observedAt, snapshot } = input;
+  if (staleReport(input)) return "report_stale";
+  return store.transaction({ label: "gateway-schedule-checkpoint.record" }, async (tx): Promise<GatewayCheckpointResult> => {
+    const owner = await checkpointOwner(tx, input);
+    if (typeof owner === "string") return owner;
+    const { user, assignment } = owner;
+    if (assignment.state !== "serving") return "assignment_not_serving";
+    if ((await activeFences(tx, user)).length) return "user_fenced";
+    if (!schedulesBelongTo(assignment.slug, snapshot)) return "foreign_schedules";
+    if (alreadyCaptured(user.scheduleCheckpoint, input)) return "accepted";
     await tx.users.records.patch(uid, {
-      scheduleCheckpoint: {
-        gatewayId, assignmentEpoch, observedAt,
-        snapshot,
-      },
+      scheduleCheckpoint: { gatewayId, assignmentEpoch, observedAt, snapshot },
     }, { revision: user.revision, gatewayId });
-    return true;
+    return "accepted";
   });
 }
 
@@ -140,20 +185,19 @@ export function parseWorkspaceCheckpoint(value: unknown): Readonly<Record<string
 
 export async function recordGatewayWorkspaceCheckpoint(
   input: GatewayCheckpointScope & { commits: Readonly<Record<string, string>> },
-): Promise<boolean> {
-  const { store, gatewayId, uid, assignmentEpoch, pod, now, observedAt, commits } = input;
-  if (!Number.isSafeInteger(observedAt) || observedAt > now + 5_000 || now - observedAt > MAX_CHECKPOINT_AGE_MS) return false;
-  return store.transaction({ label: "gateway-workspace-checkpoint.record" }, async tx => {
-    const [root, runtime, user, assignment] = await Promise.all([
-      tx.gateways.roots.get(gatewayId), tx.fleetRegistry.get(gatewayId),
-      tx.users.records.get(uid), tx.gateways.assignments.get(gatewayId, uid),
-    ]);
-    if (!root || !user || !assignment || !servingScheduleWriter(root, runtime, pod, now) || !ownsAssignment(user, assignment, input)) return false;
-    if (!canPublishWorkspace(user, assignment)) return false;
-    if (alreadyCaptured(user.workspaceCheckpoint, input)) return true;
+): Promise<GatewayCheckpointResult> {
+  const { store, gatewayId, uid, assignmentEpoch, observedAt, commits } = input;
+  if (staleReport(input)) return "report_stale";
+  return store.transaction({ label: "gateway-workspace-checkpoint.record" }, async (tx): Promise<GatewayCheckpointResult> => {
+    const owner = await checkpointOwner(tx, input);
+    if (typeof owner === "string") return owner;
+    const { user, assignment } = owner;
+    if (assignment.state !== "serving" && assignment.state !== "quiescing") return "assignment_not_serving";
+    if ((await activeFences(tx, user)).some(fence => fence !== "migration")) return "user_fenced";
+    if (alreadyCaptured(user.workspaceCheckpoint, input)) return "accepted";
     await tx.users.records.patch(uid, {
       workspaceCheckpoint: { gatewayId, assignmentEpoch, observedAt, commits },
     }, { revision: user.revision, gatewayId });
-    return true;
+    return "accepted";
   });
 }
