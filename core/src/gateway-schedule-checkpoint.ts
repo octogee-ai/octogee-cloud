@@ -2,7 +2,7 @@ import { parseAgentId } from "@octogee/shared/types/identity";
 import { GATEWAY_UNREACHABLE_AFTER_MS, type NativeScheduleCheckpoint } from "@octogee/shared/types/fleet-controller";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 import { sameEphemeralWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
-import type { EphemeralGatewayWriter, FleetRegistryRecord, GatewayAssignment, GatewayRoot, PlatformStateStore, PlatformStateTransaction, PlatformUserRecord, Stored } from "./platform-state/index.js";
+import type { EphemeralGatewayWriter, FleetRegistryRecord, GatewayAssignment, GatewayRoot, OperationRecord, PlatformStateStore, PlatformStateTransaction, PlatformUserRecord, Stored } from "./platform-state/index.js";
 
 const MAX_CHECKPOINT_AGE_MS = 60_000;
 
@@ -102,16 +102,26 @@ function ownsAssignment(user: PlatformUserRecord, assignment: GatewayAssignment,
     assignment.slug === user.slug && assignment.epoch === input.assignmentEpoch;
 }
 
-function completedOwnRetirement(user: PlatformUserRecord, retirement: Record<string, unknown>): boolean {
-  const { uid, slug, completedAt, cutoverCommittedAt } = retirement;
-  return uid === user.uid && slug === user.slug &&
+function completedOwnRetirement(
+  user: PlatformUserRecord, retirement: Record<string, unknown>,
+): retirement is Record<string, unknown> & { returnOperationId: string } {
+  const { uid, slug, completedAt, cutoverCommittedAt, returnOperationId } = retirement;
+  return uid === user.uid && slug === user.slug && typeof returnOperationId === "string" && returnOperationId.length > 0 &&
     typeof cutoverCommittedAt === "number" && Number.isFinite(cutoverCommittedAt) && cutoverCommittedAt > 0 &&
     typeof completedAt === "number" && Number.isFinite(completedAt) && completedAt >= cutoverCommittedAt;
 }
 
-function activeFences(user: PlatformUserRecord): string[] {
+function returnOperationCompletes(operation: OperationRecord | null, retirement: Record<string, unknown>): boolean {
+  if (operation === null) return true;
+  return operation.kind === "migrate-user" && operation.status === "succeeded" &&
+    operation.cutoverCommittedAt === retirement.cutoverCommittedAt && operation.input?.uid === retirement.uid &&
+    operation.input.fromGatewayId === retirement.sourceGatewayId && operation.input.toGatewayId === retirement.sharedGatewayId;
+}
+
+async function activeFences(tx: PlatformStateTransaction, user: PlatformUserRecord): Promise<string[]> {
   const { pendingNativeSchedulerRetirement: retirement, ...fences } = user.fences;
-  const dormant = retirement === undefined || completedOwnRetirement(user, retirement);
+  const dormant = retirement === undefined || (completedOwnRetirement(user, retirement) &&
+    returnOperationCompletes(await tx.journal.operations.get(retirement.returnOperationId), retirement));
   return [...Object.keys(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
 }
 
@@ -153,7 +163,7 @@ export async function recordGatewayScheduleCheckpoint(input: CheckpointRequest):
     if (typeof owner === "string") return owner;
     const { user, assignment } = owner;
     if (assignment.state !== "serving") return "assignment_not_serving";
-    if (activeFences(user).length) return "user_fenced";
+    if ((await activeFences(tx, user)).length) return "user_fenced";
     if (!schedulesBelongTo(assignment.slug, snapshot)) return "foreign_schedules";
     if (alreadyCaptured(user.scheduleCheckpoint, input)) return "accepted";
     await tx.users.records.patch(uid, {
@@ -183,7 +193,7 @@ export async function recordGatewayWorkspaceCheckpoint(
     if (typeof owner === "string") return owner;
     const { user, assignment } = owner;
     if (assignment.state !== "serving" && assignment.state !== "quiescing") return "assignment_not_serving";
-    if (activeFences(user).some(fence => fence !== "migration")) return "user_fenced";
+    if ((await activeFences(tx, user)).some(fence => fence !== "migration")) return "user_fenced";
     if (alreadyCaptured(user.workspaceCheckpoint, input)) return "accepted";
     await tx.users.records.patch(uid, {
       workspaceCheckpoint: { gatewayId, assignmentEpoch, observedAt, commits },

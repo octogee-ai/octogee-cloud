@@ -158,9 +158,27 @@ describe("durable scheduler checkpoints", () => {
     docs.set(key, { ...docs.get(key), gatewayClass: "shared", allocation: undefined, ownerUid: null, builderSlug: null });
     docs.set(`glmGateways/${gatewayId}`, registryWithPod());
     docs.set(`users/${uid}`, {
-      provisioning: { pendingNativeSchedulerRetirement: { uid, slug: "alice", ...custody }, openclaw: { slug: "alice", gatewayId } },
+      provisioning: { pendingNativeSchedulerRetirement: { uid, slug: "alice", returnOperationId: "return-one", ...custody }, openclaw: { slug: "alice", gatewayId } },
     });
     await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe("user_fenced");
+    await expect(recordGatewayWorkspaceCheckpoint({ ...report, commits: { workspace: "a".repeat(40) } })).resolves.toBe("user_fenced");
+  });
+
+  it("keeps fencing a completed retirement whose journaled return did not succeed with that cutover", async () => {
+    const { docs, report } = harness();
+    const key = `gateways/${gatewayId}`;
+    docs.set(key, { ...docs.get(key), gatewayClass: "shared", allocation: undefined, ownerUid: null, builderSlug: null });
+    docs.set(`glmGateways/${gatewayId}`, registryWithPod());
+    const retirement = { uid, slug: "alice", returnOperationId: "return-one", sourceGatewayId: "alice-s-1",
+      sharedGatewayId: "shared-green", cutoverCommittedAt: 3_000, completedAt: 3_500 };
+    docs.set(`users/${uid}`, { provisioning: { pendingNativeSchedulerRetirement: retirement, openclaw: { slug: "alice", gatewayId } } });
+    const returned = { kind: "migrate-user", status: "succeeded", cutoverCommittedAt: 3_000, createdAt: 1, createdBy: "test",
+      startedAt: 1, completedAt: 3_500, inputUid: uid, input: { uid, fromGatewayId: "alice-s-1", toGatewayId: "shared-green" } };
+    docs.set("glmOperations/return-one", returned);
+    await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe("accepted");
+    docs.set("glmOperations/return-one", { ...returned, status: "failed" });
+    await expect(recordGatewayScheduleCheckpoint({ ...report, observedAt: 4_050 })).resolves.toBe("user_fenced");
+    docs.set("glmOperations/return-one", { ...returned, cutoverCommittedAt: 2_000 });
     await expect(recordGatewayWorkspaceCheckpoint({ ...report, commits: { workspace: "a".repeat(40) } })).resolves.toBe("user_fenced");
   });
 

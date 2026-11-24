@@ -70,14 +70,22 @@ function ownsAssignment(user, assignment, input) {
         assignment.slug === user.slug && assignment.epoch === input.assignmentEpoch;
 }
 function completedOwnRetirement(user, retirement) {
-    const { uid, slug, completedAt, cutoverCommittedAt } = retirement;
-    return uid === user.uid && slug === user.slug &&
+    const { uid, slug, completedAt, cutoverCommittedAt, returnOperationId } = retirement;
+    return uid === user.uid && slug === user.slug && typeof returnOperationId === "string" && returnOperationId.length > 0 &&
         typeof cutoverCommittedAt === "number" && Number.isFinite(cutoverCommittedAt) && cutoverCommittedAt > 0 &&
         typeof completedAt === "number" && Number.isFinite(completedAt) && completedAt >= cutoverCommittedAt;
 }
-function activeFences(user) {
+function returnOperationCompletes(operation, retirement) {
+    if (operation === null)
+        return true;
+    return operation.kind === "migrate-user" && operation.status === "succeeded" &&
+        operation.cutoverCommittedAt === retirement.cutoverCommittedAt && operation.input?.uid === retirement.uid &&
+        operation.input.fromGatewayId === retirement.sourceGatewayId && operation.input.toGatewayId === retirement.sharedGatewayId;
+}
+async function activeFences(tx, user) {
     const { pendingNativeSchedulerRetirement: retirement, ...fences } = user.fences;
-    const dormant = retirement === undefined || completedOwnRetirement(user, retirement);
+    const dormant = retirement === undefined || (completedOwnRetirement(user, retirement) &&
+        returnOperationCompletes(await tx.journal.operations.get(retirement.returnOperationId), retirement));
     return [...Object.keys(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
 }
 async function checkpointOwner(tx, input) {
@@ -114,7 +122,7 @@ export async function recordGatewayScheduleCheckpoint(input) {
         const { user, assignment } = owner;
         if (assignment.state !== "serving")
             return "assignment_not_serving";
-        if (activeFences(user).length)
+        if ((await activeFences(tx, user)).length)
             return "user_fenced";
         if (!schedulesBelongTo(assignment.slug, snapshot))
             return "foreign_schedules";
@@ -145,7 +153,7 @@ export async function recordGatewayWorkspaceCheckpoint(input) {
         const { user, assignment } = owner;
         if (assignment.state !== "serving" && assignment.state !== "quiescing")
             return "assignment_not_serving";
-        if (activeFences(user).some(fence => fence !== "migration"))
+        if ((await activeFences(tx, user)).some(fence => fence !== "migration"))
             return "user_fenced";
         if (alreadyCaptured(user.workspaceCheckpoint, input))
             return "accepted";
