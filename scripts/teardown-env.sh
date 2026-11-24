@@ -1392,6 +1392,14 @@ if $FULL; then
 fi
 
 # ── 7. Full: Cloud Functions ──────────────────────────────────────────────
+preserved_function() {
+  local kept
+  for kept in ${ENV_TEARDOWN_PRESERVED_FUNCTIONS[@]+"${ENV_TEARDOWN_PRESERVED_FUNCTIONS[@]}"}; do
+    [[ "$1" == "$kept" ]] && return 0
+  done
+  return 1
+}
+
 if $FULL; then
   echo ""
   if confirm "Delete all Cloud Functions in '$FIREBASE_PROJECT'? (chat proxy preserved)"; then
@@ -1404,6 +1412,7 @@ if $FULL; then
       [[ -z "$extra" && ( "$generation" == "GEN_1" || "$generation" == "GEN_2" ) ]] \
         || die "unexpected Cloud Function inventory row '$fn,$generation${extra:+,$extra}'"
       [[ "$fn" == "octogee-chat-proxy" ]] && continue
+      preserved_function "$fn" && continue
       FILTERED_FN_LIST+="$fn,$generation"$'\n'
     done <<< "$FN_LIST"
     FN_LIST="${FILTERED_FN_LIST%$'\n'}"
