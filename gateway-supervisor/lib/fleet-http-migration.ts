@@ -2897,7 +2897,9 @@ async function authorizeCarriedAgents(input: StagedImportInput, prepared: Prepar
   if (!Array.isArray(expected) || expected.length !== prepared.stores.length ||
       new Set(expected.map(anchor => anchor.agentId)).size !== expected.length ||
       new Set(prepared.stores.map(store => store.agentId)).size !== prepared.stores.length) {
-    throw new Error("carried agent roster does not match migration authority");
+    const roster = (ids: unknown[]) => `[${ids.map(String).sort().join(", ")}]`;
+    const authorized = Array.isArray(expected) ? roster(expected.map(anchor => anchor.agentId)) : "unreadable";
+    throw new Error(`carried agent roster does not match migration authority: authority ${authorized} carried ${roster(prepared.stores.map(store => store.agentId))}`);
   }
   const stores = prepared.stores.map(store => {
     const anchor = expected.find(item => item.agentId === store.agentId);

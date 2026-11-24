@@ -212,5 +212,9 @@ export async function retireProjectAgentForDeletion(
     );
     await platformStateStore.secrets.delete(uid, secretId);
   }
-  await platformStateStore.users.records.removeAgents(uid, [projectAgentId(workspaceId, project)]);
+  const agentId = projectAgentId(workspaceId, project);
+  await platformStateStore.transaction({ label: "project-agent.retire-for-deletion" }, async (tx) => {
+    await tx.users.records.removeAgents(uid, [agentId]);
+    await tx.users.agentStores.delete(uid, agentId);
+  });
 }

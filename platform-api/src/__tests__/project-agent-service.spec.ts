@@ -37,6 +37,7 @@ vi.mock("@octogee/core/mattermost/project-agent", () => ({
 const { provisionProjectAgent, retireProjectAgentForDeletion } = await import(
   "../lib/project-agent-service.js"
 );
+const { platformStateStore } = await import("@octogee/core/identity/platform-state-store");
 
 function actor(overrides: Record<string, unknown> = {}) {
   return { uid: "owner-1", workspaceId: "mira", ...overrides };
@@ -292,9 +293,32 @@ describe("provisionProjectAgent", () => {
 
 const SECRET_PATH = "users/owner-1/secrets/projectAgentMattermost-orbit";
 
+async function seedAgentAnchor(agentId: string, storeId: string) {
+  await platformStateStore.users.agentStores.put("owner-1", {
+    kind: "agent", agentId, storeId, schema: `agent_${storeId.slice(0, 8)}`,
+    gatewayId: "shared-a", generation: null, assignmentEpoch: 3, recordedAt: 1,
+  });
+}
+
+async function anchoredAgentIds() {
+  return (await platformStateStore.users.agentStores.list("owner-1"))
+    .flatMap((record) => record.kind === "agent" ? [record.agentId] : []);
+}
+
 describe("retireProjectAgentForDeletion", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     seedOwner(["octogee-mira-coach", PROJECT_AGENT_ID]);
+    await seedAgentAnchor("octogee-mira-coach", "11111111-1111-4111-8111-111111111111");
+    await seedAgentAnchor(PROJECT_AGENT_ID, "22222222-2222-4222-8222-222222222222");
+  });
+
+  it("removes the retired agent's store anchor with its roster id and keeps the coach anchor", async () => {
+    h.docs.set(SECRET_PATH, { mmUserId: "bot-1", personalToken: "pat-1" });
+
+    await retireProjectAgentForDeletion("owner-1", "mira", "orbit");
+
+    expect(rosteredAgentIds()).toEqual(["octogee-mira-coach"]);
+    expect(await anchoredAgentIds()).toEqual(["octogee-mira-coach"]);
   });
 
   it("retires the minted bot, then removes the roster id", async () => {
@@ -337,5 +361,6 @@ describe("retireProjectAgentForDeletion", () => {
     );
 
     expect(rosteredAgentIds()).toEqual(["octogee-mira-coach", PROJECT_AGENT_ID]);
+    expect(await anchoredAgentIds()).toEqual(["octogee-mira-coach", PROJECT_AGENT_ID]);
   });
 });

@@ -4268,12 +4268,34 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const result = await finishImport(deps, migrationId);
 
     expect(result.getStatus()).toBe(500);
-    expect(result.getBody()).toMatchObject({ message: "carried agent roster does not match migration authority" });
+    expect(result.getBody()).toMatchObject({ message: "carried agent roster does not match migration authority: " +
+      `authority [octogee-chris-coach] carried [octogee-chris-coach, ${retired}]` });
     expect(spawnMock.mock.calls).toHaveLength(spawnsBeforeFinish);
     for (const agentId of ["octogee-chris-coach", retired]) {
       expect(fsSync.existsSync(path.join(importDir, "agents", agentId, "agent", "openclaw-agent.sqlite"))).toBe(false);
     }
     expect(upgradeImportedAgents).not.toHaveBeenCalled();
+  });
+
+  it("names both rosters when the migration authority lists an agent the source no longer carries", async () => {
+    const importDir = await mkTempRoot(), procRoot = await mkTempRoot();
+    const migrationId = "shared-uncarried-authorized-agent";
+    const retired = "octogee-chris-proj-retired-coach";
+    const targetMigrationIdentityCustody = vi.fn(async () => ({ ...sharedTargetAuthority("chris", migrationId), anchors: [
+      { agentId: "octogee-chris-coach", storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" },
+      { agentId: retired, storeId: "2624f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_retired" },
+    ] }));
+    const { deps, stageDir } = await prepareImport({ migrationId, importDir, daemon: mkFakeChild(),
+      adapter: { isIsolatedGateway: () => false, targetMigrationIdentityCustody },
+      deps: { procRoot, upgradeImportedAgents: vi.fn(async () => {}) } as Partial<MigrationHandlerDeps> });
+    await stageSnapshot(stageDir, () => {});
+    spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+
+    const result = await finishImport(deps, migrationId);
+
+    expect(result.getStatus()).toBe(500);
+    expect(result.getBody()).toMatchObject({ message: "carried agent roster does not match migration authority: " +
+      `authority [octogee-chris-coach, ${retired}] carried [octogee-chris-coach]` });
   });
 
   it("rejects a delayed user release while final import holds its in-process claim", async () => {

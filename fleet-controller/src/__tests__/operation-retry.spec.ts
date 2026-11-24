@@ -1225,6 +1225,7 @@ describe('fenced source management health availability', () => {
 
  it.each([
    "carried agent roster does not match migration authority",
+   "carried agent roster does not match migration authority: authority [octogee-alice-coach] carried [octogee-alice-coach, octogee-alice-proj-retired-coach]",
    "carried agent is not authorized: octogee-alice-proj-retired-coach",
  ])("fails a fenced final transfer whose target refuses the carried roster: %s", message => {
    const error = `migration forward recovery pending: status 503: /finish-rsync-import/shared-new: 500 ${JSON.stringify({ error: "import failed", message })}`;
