@@ -78,10 +78,14 @@ const TRANSIENT_ERROR_PATTERNS: readonly RegExp[] = [
   /\[migration-activation:[^\]]+\] source has no applied fingerprint; converge it before migration/i,
 ];
 
+const DETERMINISTIC_REFUSAL_PATTERNS: readonly RegExp[] = [
+  /\/finish-rsync-import\/\S+: 500 \{"error":"import failed","message":"carried agent (?:roster does not match migration authority|is not authorized: [^"]+)"\}/,
+];
+
 export function classifyOperationFailure(
   error: string | undefined,
 ): OperationFailureClassification {
-  if (!error) return "terminal";
+  if (!error || DETERMINISTIC_REFUSAL_PATTERNS.some((pattern) => pattern.test(error))) return "terminal";
   if (isGatewayStartupUnavailable(error) || isAgentStoreRetirementSessionDrain(error)) return "transient";
   return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(error))
     ? "transient"
