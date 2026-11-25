@@ -82,11 +82,16 @@ function returnOperationCompletes(operation, retirement) {
         operation.cutoverCommittedAt === retirement.cutoverCommittedAt && operation.input?.uid === retirement.uid &&
         operation.input.fromGatewayId === retirement.sourceGatewayId && operation.input.toGatewayId === retirement.sharedGatewayId;
 }
+export function unsettledUserFences(fences) {
+    const { runtimeReset, ...others } = fences;
+    const names = Object.keys(others);
+    return runtimeReset === undefined || runtimeReset.status === "acknowledged" ? names : [...names, "runtimeReset"];
+}
 async function activeFences(tx, user) {
     const { pendingNativeSchedulerRetirement: retirement, ...fences } = user.fences;
     const dormant = retirement === undefined || (completedOwnRetirement(user, retirement) &&
         returnOperationCompletes(await tx.journal.operations.get(retirement.returnOperationId), retirement));
-    return [...Object.keys(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
+    return [...unsettledUserFences(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
 }
 async function checkpointOwner(tx, input) {
     const { gatewayId, uid } = input;

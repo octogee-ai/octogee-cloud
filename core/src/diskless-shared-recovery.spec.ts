@@ -88,6 +88,21 @@ describe("atomic diskless Shared recovery", () => {
     expect(await store.users.records.get(uid)).toMatchObject({ gateway: { gatewayId: fromGatewayId }, fences: {} });
   });
 
+  it.each([
+    { status: "acknowledged", acknowledgedAt: 1_500, commits: true },
+    { status: "pending", commits: false },
+  ])("lets a diskless return pass an acknowledged runtime reset but not a pending one ($status)", async ({ commits: settled, ...state }) => {
+    const { docs, deps, store } = await harness();
+    const user = docs.get(`users/${uid}`)! as { provisioning: { openclaw: Record<string, unknown> } };
+    docs.set(`users/${uid}`, { ...user, provisioning: { ...user.provisioning, openclaw: { ...user.provisioning.openclaw,
+      runtimeReset: { uid, slug, operationId: "reset-one", sourceGatewayId: "alice-s-1", targetGatewayId: "shared-gone",
+        generation: 2, disposableLeaseId: "lease-zero", disposableLeaseGeneration: 1, requestedAt: 1_000, ...state } } } });
+    const recovery = commitDisklessSharedRecovery(deps, input);
+    if (settled) await expect(recovery).resolves.toMatchObject({ targetEpoch: 5, restorePending: true });
+    else await expect(recovery).rejects.toThrow(/source assignment changed/);
+    expect((await store.users.records.get(uid))?.fences.runtimeReset).toMatchObject(state);
+  });
+
   it.each([2, 3])("seeds immediate recovery only from the serving Shared epoch (%s)", async checkpointEpoch => {
     const { docs, deps, store } = await harness();
     const target = docs.get(`gateways/${fromGatewayId}`)!;
