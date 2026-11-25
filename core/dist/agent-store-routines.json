@@ -1,5 +1,5 @@
 {
-    "sourceSha": "5098a64c8dc5eacd11555eeb7fe0febbbec9753d",
+    "sourceSha": "c175f2cb700c095176c3fb73cfa0a5719327b9ea",
     "routines": {
         "memory_index_chunks_search_sync": [
             "2d8d1fc22ff8f8d631ea85fa92758c3ce290f085bac3ded62f2995fe1361d9cd"
@@ -315,6 +315,9 @@
         ],
         "constraint:session_key_contract:session_key_contract_pkey": [
             "eaedcbde80f45442045d981957d77a2242f6792f3d41edda392ea09adbf33d6b"
+        ],
+        "constraint:session_members:session_members_access_check": [
+            "776ef9dc07b563cd79a1a64509c55cda51e413ba3847ee1d45bdb6604b011621"
         ],
         "constraint:session_members:session_members_pkey": [
             "c29a1f8f1c5d626f1cc26238ff8a6eb6ba525f617df8ecc5b32d611be288aeba"

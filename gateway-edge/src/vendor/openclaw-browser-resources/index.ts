@@ -52,10 +52,10 @@ var Fe = yn((Ue, J) => {
       for (c = r - s, i = ":"; c--; )
         i += "0:";
       return t = t.replace("::", i), t[0] === ":" && (t = t.slice(1)), t[t.length - 1] === ":" && (t = t.slice(0, -1)), r = (function() {
-        let b = t.split(":"), k = [];
+        let b = t.split(":"), I = [];
         for (let C = 0; C < b.length; C++)
-          k.push(b[C].length > 4 ? NaN : parseInt(b[C], 16));
-        return k;
+          I.push(b[C].length > 4 ? NaN : parseInt(b[C], 16));
+        return I;
       })(), {
         parts: r,
         zoneId: d
@@ -82,7 +82,7 @@ var Fe = yn((Ue, J) => {
       }
       return parseInt(t, 10);
     }
-    function I(t, r) {
+    function k(t, r) {
       for (; t.length < r; )
         t = `0${t}`;
       return t;
@@ -377,7 +377,7 @@ var Fe = yn((Ue, J) => {
         let r = (function() {
           let o = [];
           for (let d = 0; d < this.parts.length; d++)
-            o.push(I(this.parts[d].toString(16), 4));
+            o.push(k(this.parts[d].toString(16), 4));
           return o;
         }).call(this).join(":"), s = "";
         return this.zoneId && (s = `%${this.zoneId}`), r + s;
@@ -397,10 +397,10 @@ var Fe = yn((Ue, J) => {
       }, t.prototype.toRFC5952String = function() {
         let r = /((^|:)(0(:|$)){2,})/g, s = "";
         this.zoneId && (s = `%${this.zoneId}`);
-        let o = this.toNormalizedString(), d = o.slice(0, o.length - s.length), i = 0, c = -1, b = -1, k;
-        for (; k = r.exec(d); ) {
-          let C = (k[0].match(/0/g) || []).length;
-          C > b && (b = C, i = k.index, c = k[0].length);
+        let o = this.toNormalizedString(), d = o.slice(0, o.length - s.length), i = 0, c = -1, b = -1, I;
+        for (; I = r.exec(d); ) {
+          let C = (I[0].match(/0/g) || []).length;
+          C > b && (b = C, i = I.index, c = I[0].length);
         }
         return c < 0 ? d + s : `${d.substring(0, i)}::${d.substring(i + c)}${s}`;
       }, t.prototype.toString = function() {
@@ -592,7 +592,7 @@ function me(e, n) {
   let a = w(w(e)?.__openclaw);
   return ge(a?.seq) ?? ge(n?.messageSeq);
 }
-function K(e) {
+function G(e) {
   let n = x(e);
   return n?.endsWith(":user") ? n.slice(0, -5) || null : n;
 }
@@ -600,7 +600,7 @@ function ne(e, n) {
   let a = w(e), l = x(a?.role)?.toLowerCase();
   if (!a || !l)
     return null;
-  let p = w(a.__openclaw), g = x(p?.importedFrom), y = x(p?.cliSessionId), m = x(p?.externalId), T = w(p?.transcriptPosition), R = x(T?.source), I = !(R !== null && R.length <= 128 && typeof T?.rawSeq == "number" && Number.isSafeInteger(T.rawSeq) && T.rawSeq >= 0) && !!(g || y || m), u = x(p?.idempotencyKey) ?? x(a.idempotencyKey) ?? x(n?.idempotencyKey) ?? x(n?.clientRunId), t = K(u), r = K(n?.runId), s = K(p?.runId), o = K(
+  let p = w(a.__openclaw), g = x(p?.importedFrom), y = x(p?.cliSessionId), m = x(p?.externalId), T = w(p?.transcriptPosition), R = x(T?.source), k = !(R !== null && R.length <= 128 && typeof T?.rawSeq == "number" && Number.isSafeInteger(T.rawSeq) && T.rawSeq >= 0) && !!(g || y || m), u = x(p?.idempotencyKey) ?? x(a.idempotencyKey) ?? x(n?.idempotencyKey) ?? x(n?.clientRunId), t = G(u), r = G(n?.runId), s = G(p?.runId), o = G(
     w(a.openclawStreamFallback)?.runId
   ), d = x(p?.mirrorOrigin) !== null, i = l === "assistant" && x(a.api)?.toLowerCase() === "cli", c = i && t?.startsWith("cli-assistant:") ? x(t.slice(14)) : t, b = l === "assistant" ? s ?? r ?? o ?? (i || !d ? c : null) : s ?? c ?? r;
   return {
@@ -610,9 +610,9 @@ function ne(e, n) {
     idempotencyKey: u,
     sendId: l === "user" ? t ?? b : null,
     runId: b,
-    isImported: I,
+    isImported: k,
     // Imported IDs belong to their provider and CLI session, never the native ID namespace.
-    externalSource: I && g && y && m ? JSON.stringify([g, y, m]) : null
+    externalSource: k && g && y && m ? JSON.stringify([g, y, m]) : null
   };
 }
 
@@ -668,14 +668,14 @@ function Ce(e) {
   let l = h(n.presentation), p = h(n.view), g = h(n.source), y = Sn(h(n.mcpApp)), m = y?.viewId, R = f(l?.target) ?? f(n?.target) ?? "assistant_message";
   if (R !== "assistant_message" && R !== "node_panel")
     return;
-  let M = f(l?.title) ?? f(p?.title), I = Tn(
+  let M = f(l?.title) ?? f(p?.title), k = Tn(
     U(l?.preferred_height) ?? U(l?.preferredHeight) ?? U(p?.preferred_height) ?? U(p?.preferredHeight)
   ), u = f(l?.class_name) ?? f(l?.className), t = f(l?.style), r = f(l?.sandbox), s = f(p?.url) ?? f(p?.entryUrl), o = f(p?.id) ?? f(p?.docId), d = f(p?.boardWidgetName), i = xe(d) ? d : void 0, c = {
     kind: "canvas",
     surface: R,
     render: "url",
     ...M ? { title: M } : {},
-    ...I ? { preferredHeight: I } : {},
+    ...k ? { preferredHeight: k } : {},
     ...r === "strict" || r === "scripts" ? { sandbox: r } : {},
     ...y ? { mcpApp: y } : {}
   };
@@ -702,26 +702,26 @@ function Te(e) {
 }
 
 // openclaw/src/chat/tool-content.ts
-var In = [
+var kn = [
   "id",
   "tool_call_id",
   "toolCallId",
   "tool_use_id",
   "toolUseId"
 ];
-function Ie(e) {
+function ke(e) {
   return typeof e == "string" ? e.toLowerCase() : "";
 }
 function re(e) {
-  let n = Ie(e);
+  let n = ke(e);
   return n === "toolcall" || n === "tool_call" || n === "tooluse" || n === "tool_use";
 }
 function V(e) {
-  let n = Ie(e);
+  let n = ke(e);
   return n === "toolresult" || n === "tool_result";
 }
-function ke(e) {
-  for (let n of In) {
+function Ie(e) {
+  for (let n of kn) {
     let a = S(e[n]);
     if (a)
       return a;
@@ -731,7 +731,7 @@ function X(e) {
   let n = e.isError ?? e.is_error;
   return typeof n == "boolean" ? n : void 0;
 }
-var kn = /^tool not found\.?$/i, Rn = 2e4, Mn = /* @__PURE__ */ new Set(["error", "failed", "timeout"]);
+var In = /^tool not found\.?$/i, Rn = 2e4, Mn = /* @__PURE__ */ new Set(["error", "failed", "timeout"]);
 function En(e) {
   return typeof e == "string" && Mn.has(e.trim().toLowerCase());
 }
@@ -739,7 +739,7 @@ function Re(e) {
   let n = e?.trim();
   if (!n)
     return !1;
-  if (kn.test(n))
+  if (In.test(n))
     return !0;
   if (n.length > Rn || !n.startsWith("{") || !n.endsWith("}"))
     return !1;
@@ -890,7 +890,7 @@ var je = [
 ], Cs = /* @__PURE__ */ new Set([...je, "pluginId"]), Ss = /* @__PURE__ */ new Set([...je, "registry", "skillRef"]);
 
 // openclaw/src/shared/plugin-inline-view.ts
-var ks = 16 * 1024;
+var Is = 16 * 1024;
 
 // openclaw/ui/src/lib/chat/message-normalizer.ts
 function de(e) {
@@ -907,7 +907,7 @@ function Be(e) {
 function F(e, n) {
   return n.map((a) => [a, e]);
 }
-var Ka = new Map([
+var Ga = new Map([
   // A launched subagent is a worker, not one more operation of the launcher.
   ...F("subagents", ["sessions_spawn"]),
   ...F("commands", ["exec", "bash", "shell", "run_command", "run_terminal_cmd"]),
@@ -958,13 +958,13 @@ var ze = {
 }, We = {
   label: "Agent",
   allAgents: "All agents"
-}, Ke = {
+}, Ge = {
   pinToSwitcher: "Pin to switcher",
   unpinFromSwitcher: "Unpin from switcher"
 };
 
 // openclaw/ui/src/i18n/locales/en.ts
-var Kn = {
+var Gn = {
   runtimeErrors: {
     socketInsecure: "Browser refused the Gateway WebSocket for security reasons. Use wss:// when OpenClaw is served over HTTPS/Tailscale Serve, or open it on loopback at http://127.0.0.1:18789.",
     socketRefused: "Browser refused the Gateway WebSocket for security reasons. Check the Gateway WebSocket URL and browser security policy.",
@@ -1287,7 +1287,9 @@ var Kn = {
     automationPrefix: "Automation:",
     actionRequiresConnection: "Connect to the Gateway to change sessions.",
     actionUnavailable: "This Gateway does not support this session action.",
-    actionRequiresScope: "This action requires {scope} access.",
+    actionPermissionDenied: "You don\u2019t have permission to do this.",
+    movePermissionDenied: "You don\u2019t have permission to move this session.",
+    createPermissionDenied: "You don\u2019t have permission to create a session.",
     actionRequiresOwnership: "Only the session creator or an admin can make this change.",
     draftCleanupFailed: "Session deleted; browser draft remains. Clear site data.",
     createdBy: "Created by {name}",
@@ -1388,7 +1390,7 @@ var Kn = {
     copyId: {},
     default: "Default",
     setDefault: {},
-    ...Ke,
+    ...Ge,
     selectTitle: {},
     selectSubtitle: {},
     tabs: {},
@@ -2088,10 +2090,8 @@ var Kn = {
       manage: "Manage saved accounts\u2026"
     },
     mentions: {},
-    cloudWorkerFailed: "Couldn\u2019t continue this session. Check its device and try again. {error}",
     errorDetails: "Error details",
     errorSummary: "Couldn\u2019t complete this action. Try again.",
-    errorReplySummary: "Couldn't finish this reply. Check the conversation before trying again.",
     errorReplyTitle: "Couldn\u2019t finish this reply",
     historyUnavailableTitle: "Couldn\u2019t load this conversation",
     historyUnavailableBody: "Try again to load its messages.",
@@ -2113,8 +2113,6 @@ var Kn = {
 Do the update it asks for on this machine, confirm the installed version, and tell me if I still need to restart the OpenClaw Gateway.`,
       continuePrompt: "Continue from where you stopped. Check which actions already completed before retrying anything."
     },
-    errorBusySummary: "OpenClaw is busy. Check status before trying again.",
-    errorSignInSummary: "Couldn't sign in to the AI service. Sign in again under Models.",
     errorStartSummary: "Couldn\u2019t start this session. Try again.",
     checkStatus: "Check status",
     details: "Details",
@@ -2244,6 +2242,9 @@ Do the update it asks for on this machine, confirm the installed version, and te
     codeBlock: {},
     workspaceConflict: {},
     compaction: {
+      running: "Compacting",
+      completed: "Compacted context",
+      duration: "Duration: {duration}",
       savedTokensWithPercent: "saved {count} tokens ({percent}%)"
     },
     sessionReset: {
@@ -2525,10 +2526,10 @@ Do the update it asks for on this machine, confirm the installed version, and te
     urlPlaceholder: "Supported link URL"
   },
   openclawId: {}
-}, z = Kn;
+}, z = Gn;
 
 // openclaw/ui/src/i18n/locales/en-chat-tool-labels.ts
-var Ge = {
+var Ke = {
   chat: {
     toolCards: {
       patch: {
@@ -2569,6 +2570,9 @@ var Ge = {
       executedCode: "Ran a script",
       executingCode: "Running a script",
       codeExecution: "Script execution",
+      checkingGoal: "Checking goal",
+      checkedGoal: "Checked goal",
+      checkGoal: "Check goal",
       changingFiles: "Changing files",
       changedFiles: "Changed files",
       viewingImage: "Viewing image",
@@ -2598,6 +2602,24 @@ var Ge = {
       listSubagents: "List subagents",
       readChat: "Read chat",
       readingChat: "Reading chat",
+      sessionSend: {
+        sending: "Sending message",
+        sendingNamed: "Sending message to {name}",
+        sent: "Sent message",
+        sentNamed: "Sent message to {name}",
+        replyTimedOut: "Sent \xB7 reply timed out",
+        replyTimedOutNamed: "Sent to {name} \xB7 reply timed out",
+        unconfirmed: "Delivery unconfirmed",
+        unconfirmedNamed: "Delivery unconfirmed \xB7 {name}",
+        accepted: "Message accepted",
+        acceptedNamed: "Message accepted for {name}",
+        queued: "Queued message",
+        queuedNamed: "Queued message to {name}",
+        deferred: "Message deferred",
+        deferredNamed: "Message to {name} deferred",
+        send: "Send message",
+        sendNamed: "Send message to {name}"
+      },
       waitingForAgents: "Waiting for subagents",
       waitedForAgents: "Waited for agents",
       waitForAgents: "Wait for subagents",
@@ -2635,6 +2657,12 @@ var Ge = {
         commandsSummaryContinuation: "ran commands",
         commandsPending: "Commands",
         commandsPendingContinuation: "commands",
+        compactionsRunning: "Compacting context",
+        compactionsRunningContinuation: "compacting context",
+        compactionsSummary: "Compacted context",
+        compactionsSummaryContinuation: "compacted context",
+        compactionsPending: "Context compaction",
+        compactionsPendingContinuation: "context compaction",
         readChangesRunning: "Reading and changing files",
         readChangesRunningContinuation: "reading and changing files",
         readChangesSummary: "Read and changed files",
@@ -2732,6 +2760,8 @@ var Ge = {
         unknown: "{count} unknown"
       },
       openFile: "Open file",
+      signIn: "Sign in",
+      signInTo: "Sign in to {server}",
       copyToClipboard: "Copy to clipboard",
       downloadFile: "Download file",
       fileChanges: "File changes",
@@ -2792,10 +2822,10 @@ var Ge = {
   }
 }, qe = Object.assign(
   () => {
-    let { activity: e, review: n, verbs: a, ...l } = Ge.chat.toolCards;
+    let { activity: e, review: n, verbs: a, ...l } = Ke.chat.toolCards;
     Object.assign(z.chat.toolCards, l), Object.assign(z.chat.toolCards.activity, e), Object.assign(z.chat.toolCards.review, n), Object.assign(z.chat.toolCards.verbs, a);
   },
-  { catalog: Ge }
+  { catalog: Ke }
 );
 
 // openclaw/ui/src/lib/protocol-validators.generated/activity.js
@@ -2822,12 +2852,12 @@ var Ye = [
   /(^type$|^actorType$|^source$|^id$)/u,
   /(^emoji$|^count$|^identities$)/u,
   /(^id$|^label$)/u
-], Gn = (e) => qn(e), qn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "itemId" in e && "phase" in e && "kind" in e && "title" in e && Object.getOwnPropertyNames(e).every(
+], Kn = (e) => qn(e), qn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "itemId" in e && "phase" in e && "kind" in e && "title" in e && Object.getOwnPropertyNames(e).every(
   (n, a) => Ye[0].test(n) || Je(e[n])
 ) && (e.delegation === void 0 || !("delegation" in e) || Hn(e.delegation)) && rt(e.itemId) && ot(e.phase) && Ve(e.kind) && Ve(e.title) && (e.status === void 0 || !("status" in e) || dt(e.status)) && (e.name === void 0 || !("name" in e) || N(e.name)) && (e.meta === void 0 || !("meta" in e) || N(e.meta)) && (e.commandBearing === void 0 || !("commandBearing" in e) || Q(e.commandBearing)) && (e.toolCallId === void 0 || !("toolCallId" in e) || N(e.toolCallId)) && (e.unpairedCall === void 0 || !("unpairedCall" in e) || Q(e.unpairedCall)) && (e.startedAt === void 0 || !("startedAt" in e) || Xe(e.startedAt)) && (e.endedAt === void 0 || !("endedAt" in e) || Xe(e.endedAt)) && (e.error === void 0 || !("error" in e) || N(e.error)) && (e.summary === void 0 || !("summary" in e) || N(e.summary)) && (e.progressText === void 0 || !("progressText" in e) || N(e.progressText)) && (e.suppressChannelProgress === void 0 || !("suppressChannelProgress" in e) || Q(e.suppressChannelProgress)) && (e.hideFromChannelProgress === void 0 || !("hideFromChannelProgress" in e) || Q(e.hideFromChannelProgress)) && (e.approvalId === void 0 || !("approvalId" in e) || N(e.approvalId)) && (e.approvalSlug === void 0 || !("approvalSlug" in e) || N(e.approvalSlug)), Je = (e) => !1, Hn = (e) => Array.isArray(e) && e.every((n, a) => Vn(n)) && e.length <= 32, Vn = (e) => typeof e == "object" && e !== null && !Array.isArray(e) && "runId" in e && "childSessionKey" in e && "status" in e && Object.getOwnPropertyNames(e).every(
   (n, a) => Ye[1].test(n) || Je(e[n])
 ) && Xn(e.runId) && Yn(e.childSessionKey) && (e.label === void 0 || !("label" in e) || He(e.label)) && (e.groupId === void 0 || !("groupId" in e) || He(e.groupId)) && (e.runtimeMs === void 0 || !("runtimeMs" in e) || Jn(e.runtimeMs)) && Qn(e.status), Xn = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 256 || e.length <= 512 && $(e) <= 256), Yn = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 1024 || e.length <= 2048 && $(e) <= 1024), He = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1) && (e.length <= 512 || e.length <= 1024 && $(e) <= 512), Jn = (e) => Number.isFinite(e) && e >= 0 && e <= 9007199254740991, Qn = (e) => Zn(e) || et(e) || Qe(e) || nt(e) || tt(e), Zn = (e) => typeof e == "string" && e === "accepted", et = (e) => typeof e == "string" && e === "done", Qe = (e) => typeof e == "string" && e === "failed", nt = (e) => typeof e == "string" && e === "killed", tt = (e) => typeof e == "string" && e === "timeout", rt = (e) => typeof e == "string" && (e.length >= 2 || e.length >= 1 && $(e) >= 1), ot = (e) => it(e) || st(e) || at(e), it = (e) => typeof e == "string" && e === "start", st = (e) => typeof e == "string" && e === "update", at = (e) => typeof e == "string" && e === "end", Ve = (e) => typeof e == "string", dt = (e) => lt(e) || ct(e) || Qe(e) || ut(e) || pt(e), lt = (e) => typeof e == "string" && e === "running", ct = (e) => typeof e == "string" && e === "completed", ut = (e) => typeof e == "string" && e === "blocked", pt = (e) => typeof e == "string" && e === "skipped", N = (e) => typeof e == "string", Q = (e) => typeof e == "boolean", Xe = (e) => Number.isFinite(e);
-var Ze = (e) => Gn(e);
+var Ze = (e) => Kn(e);
 
 // openclaw/ui/src/lib/chat/prepared-activity.ts
 function le(e) {
@@ -2950,7 +2980,7 @@ function Ct(e, n, a) {
   return a !== "browser" || !p || !g ? {} : { browserTab: g };
 }
 function rn(e, n) {
-  return ke(e) ?? S(e.callId) ?? S(n.toolCallId) ?? S(n.tool_call_id) ?? S(n.toolUseId) ?? S(n.tool_use_id);
+  return Ie(e) ?? S(e.callId) ?? S(n.toolCallId) ?? S(n.tool_call_id) ?? S(n.toolUseId) ?? S(n.tool_use_id);
 }
 function ce(e, n) {
   return S(e.name) ?? S(n.toolName) ?? S(n.tool_name) ?? "tool";
@@ -2961,10 +2991,10 @@ function St(e) {
 }
 var Tt = 0;
 function on(e) {
-  let n = e, a = w(n.__openclaw), l = a?.catalogSource === !0, p = typeof n.role == "string" ? n.role.toLowerCase() : "", g = de(e) || p === "tool" || p === "function" || typeof n.toolName == "string" || typeof n.tool_name == "string", y = mt(n.content), m = X(n), T = n.__openclawToolStreamLive === !0, R = T ? en(n.__openclawToolStreamLiveOutput) : void 0, M = Be(n.__openclawToolStreamDiffStat), I = [], u = /* @__PURE__ */ new WeakSet(), t = gt(n), r = ne(n)?.runId ?? f(n.runId), s = (i, c, b = !1) => {
-    let k = yt(i), C = i.details ?? n.details, E = w(i.__openclaw), D = X(i) ?? m ?? (l ? !1 : void 0), j = !l && k ? O(k.trim()) : void 0, W = l ? void 0 : w(C)?.bridgeDispatchStarted ?? j?.bridgeDispatchStarted, A = bt(i, C, j, b ? void 0 : n), v = i.subagentCollectionErrors ?? n.subagentCollectionErrors;
+  let n = e, a = w(n.__openclaw), l = a?.catalogSource === !0, p = typeof n.role == "string" ? n.role.toLowerCase() : "", g = de(e) || p === "tool" || p === "function" || typeof n.toolName == "string" || typeof n.tool_name == "string", y = mt(n.content), m = X(n), T = n.__openclawToolStreamLive === !0, R = T ? en(n.__openclawToolStreamLiveOutput) : void 0, M = Be(n.__openclawToolStreamDiffStat), k = [], u = /* @__PURE__ */ new WeakSet(), t = gt(n), r = ne(n)?.runId ?? f(n.runId), s = (i, c, b = !1) => {
+    let I = yt(i), C = i.details ?? n.details, E = w(i.__openclaw), D = X(i) ?? m ?? (l ? !1 : void 0), j = !l && I ? O(I.trim()) : void 0, W = l ? void 0 : w(C)?.bridgeDispatchStarted ?? j?.bridgeDispatchStarted, A = bt(i, C, j, b ? void 0 : n), v = i.subagentCollectionErrors ?? n.subagentCollectionErrors;
     return {
-      outputText: k,
+      outputText: I,
       ...typeof v == "number" && v > 0 ? { subagentCollectionErrors: v } : {},
       ...l && E?.catalogTruncated === !0 ? { catalogTruncated: !0 } : {},
       resultMessageId: l ? void 0 : !b && E && Object.hasOwn(E, "id") ? f(E.id) : t,
@@ -2974,24 +3004,24 @@ function on(e) {
       ...D !== void 0 ? { isError: D } : {},
       ...A !== void 0 ? { exitCode: A } : {},
       ...typeof W == "boolean" ? { bridgeDispatchStarted: W } : {},
-      ...l ? {} : Ct(C, k, c)
+      ...l ? {} : Ct(C, I, c)
     };
   };
   for (let i = 0; i < y.length; i++) {
     let c = y[i] ?? {}, b = re(c.type) || typeof c.name == "string" && (c.arguments != null || c.args != null || c.input != null);
     if (!b && !V(c.type))
       continue;
-    let k = f(c.runId) ?? r, C = f(c.parentToolCallId), E = rn(c, n), D = ce(c, n), j = {
+    let I = f(c.runId) ?? r, C = f(c.parentToolCallId), E = rn(c, n), D = ce(c, n), j = {
       id: E ?? `${D}:${i}`,
       ...E ? { callId: E } : {},
-      ...k ? { runId: k } : {},
+      ...I ? { runId: I } : {},
       ...C ? { parentToolCallId: C } : {},
       name: D,
       messageId: t
     }, W = c.details ?? n.details;
     if (b) {
       let _ = ht(c.arguments ?? c.args ?? c.input);
-      I.push({
+      k.push({
         ...j,
         args: _,
         inputText: St(_),
@@ -3005,28 +3035,28 @@ function on(e) {
       });
       continue;
     }
-    let A = I.find((_) => _.id === j.id) ?? I.find(
+    let A = k.find((_) => _.id === j.id) ?? k.find(
       (_) => (
         // Same-name fallback belongs to legacy blocks missing an explicit identity.
         (!E || !_.callId) && _.name === D && _.outputText === void 0 && !u.has(_)
       )
     ), v = g ? ce({}, n) : void 0, un = v && v !== "browser" ? v : A?.name ?? v ?? D, q = s(c, un);
     if (A) {
-      u.add(A), A.callId ??= E, A.runId ??= k, A.parentToolCallId ??= C, T || (A.completed = !0), Object.assign(A, q, {
+      u.add(A), A.callId ??= E, A.runId ??= I, A.parentToolCallId ??= C, T || (A.completed = !0), Object.assign(A, q, {
         preview: q.preview,
         browserTab: q.browserTab
       });
       continue;
     }
-    I.push({
+    k.push({
       ...j,
       completed: !0,
       ...q
     });
   }
-  if (g && I.length === 0) {
+  if (g && k.length === 0) {
     let i = typeof n.toolName == "string" && n.toolName || typeof n.tool_name == "string" && n.tool_name || "tool", c = rn({}, n);
-    I.push({
+    k.push({
       id: c ?? `${ce({}, n)}:0`,
       ...c ? { callId: c } : {},
       ...r ? { runId: r } : {},
@@ -3039,12 +3069,12 @@ function on(e) {
   let o = new Map(
     le(e).filter((i) => !i.suppressChannelProgress).map((i) => [i.toolCallId ?? i.itemId, i])
   ), d;
-  for (let [i, c] of I.entries()) {
+  for (let [i, c] of k.entries()) {
     l && a?.catalogTruncated === !0 && (c.catalogTruncated = !0);
     let b = c.callId ? o.get(c.callId) : void 0;
     b && (c.activity = b), !(!c.browserTab || c.callId || c.messageId) && (d ??= ++Tt, c.previewRevision = `${d}:${i}`);
   }
-  return I;
+  return k;
 }
 function dn(e) {
   if (!e || typeof e != "object")
@@ -3057,10 +3087,10 @@ function dn(e) {
 }
 
 // openclaw/ui/src/lib/chat/browser-tab-preview.ts
-function It(e) {
+function kt(e) {
   return e.callId ?? e.messageId ?? e.previewRevision;
 }
-var ln = /* @__PURE__ */ new WeakMap(), kt = /* @__PURE__ */ new Map();
+var ln = /* @__PURE__ */ new WeakMap(), It = /* @__PURE__ */ new Map();
 function cn(e, n) {
   let a = ln.get(e);
   if (a?.toolMessages === n)
@@ -3070,13 +3100,13 @@ function cn(e, n) {
     for (let y of g)
       if (P(y))
         for (let m of dn(y)) {
-          let T = It(m);
+          let T = kt(m);
           if (m.browserTab && T && an(m, !1) === "succeeded") {
             let R = fe(m.browserTab);
             l ??= /* @__PURE__ */ new Map(), l.delete(R), l.set(R, { tab: m.browserTab, revision: T });
           }
         }
-  let p = l ?? kt;
+  let p = l ?? It;
   return ln.set(e, { toolMessages: n, latest: p }), p;
 }
 

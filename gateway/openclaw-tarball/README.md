@@ -212,6 +212,82 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+### November 25 main refresh
+
+The selected OpenClaw main is `58437942943ed9107067e875dff89a5d9d155b62`.
+The [exact-tip push CI](https://github.com/openclaw/openclaw/actions/runs/45621864351)
+passed `security-fast` and skipped 40 jobs, including build artifacts, core
+lint and test types, Control UI unit and real-Gateway E2E, Docker seed E2E,
+PostgreSQL conformance, Skills Python, native platform jobs, and the final CI
+gate. The [latest successful scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43129347832)
+passed 151 jobs and conditionally skipped 11 on `cda0b61ac4d23fb0a5fa5530e37f9e74ce3face5`.
+A [nearer scheduled run](https://github.com/openclaw/openclaw/actions/runs/45604380188)
+on `ea3c645685019aa628d43cca5a1945dcbf7a3ad0` passed 142 jobs, failed 15, and
+skipped 11. Octogee independently qualifies the frozen tip.
+
+The [unmodified Linux tip](https://console.cloud.google.com/cloud-build/builds;region=us-central1/2d7536fc-c142-4bdb-aec2-d9f4fb722f06)
+passed the production core, UI, and extension typechecks and the channel
+configuration check. Its Gateway validator check reported stale generated
+`predicates.js`. The independent [aggregate check](https://console.cloud.google.com/cloud-builds;region=us-central1/d76bc191-0745-4ca7-ba87-56bf37df9cd3)
+stopped at preflight on an inherited bot credit in `CHANGELOG/2026.11.10.md`.
+Aggregate lint and policy completion were therefore unverified by that run.
+The native full build completed separately with a clean tree and matching
+build-info. The Control UI reported four CSS size or chat boot budget violations.
+
+Native [#204909](https://github.com/openclaw/openclaw/pull/204909) refreshes
+PostgreSQL admission before the read-only transaction opens. The refresh drops
+the equivalent transaction overlay and keeps the retained-reader regression.
+Native owns participation ceilings and the explicit invitation access field.
+Octogee still admits synchronized channel members according to the channel
+session rule and preserves explicit grants across roster reconciliation.
+Workspace icons consult the same membership policy before opening resources and
+again before returning bytes. Strict channel stop, single-reviewer approval,
+retained-store and outbound custody, admitted Doctor recovery, and the
+read-only scheduler checkpoint retain their Octogee boundaries. Roster sync
+checks the caller again after queued lifecycle work, and approval resolution
+keeps native creator admission alongside the live reviewer's guard.
+
+The signed overlay is `c175f2cb700c095176c3fb73cfa0a5719327b9ea`. The focused
+suites passed 306 tests, with one PostgreSQL-dependent case skipped locally.
+Production typechecks and generated-output checks passed. The native aggregate
+preflight reported the same inherited changelog attribution failure. The
+mock-export ratchet passed after the retained fixtures adopted partial mocks.
+
+The [hosted island build](https://console.cloud.google.com/cloud-build/builds;region=us-central1/455642bd-8f0c-4e6f-9b09-76db427a03b9)
+passed 43 tests. All five island manifests name the same signed source. Archive
+generation `1795615824702856` read back with SHA-256
+`f2a3eb426f2e8fe163ddfb3bfddb682b33e28bfa97ee40a5afa9b3d70fe5e0f6`.
+
+The [full Linux package build and installer](https://console.cloud.google.com/cloud-builds;region=us-central1/bd9b0821-34b9-457e-97fd-927290639e52)
+passed with matching build-info and a clean source tree. Both packers used that
+build in sequence. The installed companions, patched npm controls,
+native registry, bundled trust, and three Codex native hooks passed. The Browser
+projection was regenerated from the same source.
+
+The [PostgreSQL qualification](https://console.cloud.google.com/cloud-builds;region=us-central1/1de4b236-e5ea-4f48-8e11-cb8ea2918a47)
+passed 24 native conformance tests, including the retained transcript reader
+regression. The installed pin roll began at `e9c9cd30` and passed on PostgreSQL 16
+with pgvector 0.8.7 using the restricted gateway role. The generated routine
+catalog retains all 11 routine definitions and qualifies the new session-member
+access constraint.
+
+The [GitHub prerelease mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-c175f2cb700c-20261125)
+uses the published object names. Readback verified each complete hash at its
+GCS generation.
+
+| Object | Generation | SHA-256 |
+| --- | --- | --- |
+| `openclaw-fork-f8fd5fc1.tgz` | `1795616812420668` | `f8fd5fc1faa6e40ce2def4f4f5d7ea34524cc5f742e50ca34d3b762e60afcd09` |
+| `openclaw-mattermost-53c167fc.tgz` | `1795616855276979` | `53c167fce3fd3492259f9d2fe3932700c976649351acecb8a9df6cd1bebb70e7` |
+
+Upstream contributions [#167431](https://github.com/openclaw/openclaw/pull/167431),
+[#178755](https://github.com/openclaw/openclaw/pull/178755),
+[#186891](https://github.com/openclaw/openclaw/pull/186891),
+[#186893](https://github.com/openclaw/openclaw/pull/186893),
+[#189418](https://github.com/openclaw/openclaw/pull/189418),
+[#193636](https://github.com/openclaw/openclaw/pull/193636), and
+[#196215](https://github.com/openclaw/openclaw/pull/196215) remain open.
+
 ### November 23 scheduler checkpoint
 
 The signed overlay at `5098a64c8dc5eacd11555eeb7fe0febbbec9753d` extends the
