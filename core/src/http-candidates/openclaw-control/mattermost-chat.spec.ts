@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
+
+import { mattermostAccountIdForAgentId } from "@octogee/shared/types/identity";
 
 import type { AuthorizedChannel } from "../../channels/channel-session-authorization.js";
 import type { MattermostModelPost } from "../../channels/channel-session-model-control.js";
@@ -2065,6 +2069,283 @@ describe("Mattermost-backed OpenClaw Control chat", () => {
       kind: "response",
       frame: { ok: false, error: { code: "INVALID_REQUEST" } },
     });
+    expect(authorize).not.toHaveBeenCalled();
+  });
+});
+
+const nativeSessionId = "native-session-1";
+
+function nativeReset(timestamp: number): Record<string, unknown> {
+  return {
+    role: "system",
+    content: [{ type: "text", text: "Reset" }],
+    timestamp,
+    __openclaw: { kind: "reset", id: "reset-entry", transcriptPosition: { source: "transcript-a", rawSeq: 0 }, seq: 1 },
+  };
+}
+
+function nativePage(messages: unknown[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sessionKey,
+    sessionId: nativeSessionId,
+    messages,
+    hasMore: false,
+    totalMessages: messages.length,
+    completeSnapshot: true,
+    deltaCursor: "eyJuYXRpdmUiOiJkZWx0YSJ9",
+    ...extra,
+  };
+}
+
+function humanPosts(times: readonly number[]): MattermostModelPost[] {
+  return times.map((createAt, index) => post({
+    id: String.fromCharCode(103 + index).repeat(26),
+    message: `Turn at ${createAt}`,
+    create_at: createAt,
+    update_at: createAt,
+  }));
+}
+
+function channelSourceTurnKey(postId: string): string {
+  return `channel-user:v1:${createHash("sha256")
+    .update(JSON.stringify(["mattermost", mattermostAccountIdForAgentId(agentId), `channel:${channelId}`, postId]))
+    .digest("hex")}`;
+}
+
+async function edgeCursorFor(
+  adapter: ReturnType<typeof createMattermostControlChat>,
+  messages: unknown[],
+  key = sessionKey,
+): Promise<string> {
+  const prepared = await adapter.prepare({
+    type: "req", id: "native-history", method: "chat.history", params: { sessionKey: key, limit: 80 },
+  }, session());
+  if (prepared?.kind !== "upstream") throw new Error("expected native history pass-through");
+  const projected = prepared.project({ type: "res", id: "native-history", ok: true, payload: nativePage(messages, { sessionKey: key }) });
+  const cursor = (projected.payload as Record<string, unknown>).olderCursor;
+  if (typeof cursor !== "string") throw new Error("expected an edge older cursor");
+  return cursor;
+}
+
+interface OlderPagePayload extends Record<string, unknown> {
+  messages: Array<{ content: Array<{ text: string }>; __openclaw: { id: string } }>;
+  olderCursor?: string;
+}
+
+function responsePayload(prepared: Awaited<ReturnType<typeof olderPage>>): OlderPagePayload {
+  if (prepared?.kind !== "response" || prepared.frame.ok !== true) throw new Error("expected an edge history response");
+  return prepared.frame.payload as OlderPagePayload;
+}
+
+function pageTexts(prepared: Awaited<ReturnType<typeof olderPage>>): Array<string | undefined> {
+  return responsePayload(prepared).messages.map((message) => message.content[0]?.text);
+}
+
+async function olderPage(
+  adapter: ReturnType<typeof createMattermostControlChat>,
+  cursor: string,
+  extra: Record<string, unknown> = {},
+) {
+  return adapter.prepare({
+    type: "req", id: "older", method: "chat.history",
+    params: { sessionKey, cursor, limit: 2, maxBytes: 3 * 1024 * 1024, toolResultMaxChars: 2_000, ...extra },
+  }, session());
+}
+
+describe("Mattermost history beyond the native transcript for per-user identity", () => {
+  it("adds an edge older cursor to an exhausted initial history page without changing its messages", async () => {
+    const authorize = vi.fn();
+    const adapter = createMattermostControlChat({ perUserIdentity: true, authorize });
+    const prepared = await adapter.prepare({
+      type: "req", id: "subscribe", method: "sessions.messages.subscribe",
+      params: { key: sessionKey, initialHistory: { toolResultMaxChars: 2_000, knownState: {}, limit: 80, maxBytes: 262_144 } },
+    }, session());
+    if (prepared?.kind !== "upstream") throw new Error("expected native subscription pass-through");
+    expect(prepared.upstreamParams).toBeUndefined();
+    expect(prepared.watch).toBeUndefined();
+    const messages = [nativeReset(1_000)];
+    const response = prepared.project({ type: "res", id: "subscribe", ok: true, payload: {
+      subscribed: true, key: sessionKey, initialHistory: { ok: true, payload: nativePage(messages) },
+    } });
+    const page = ((response.payload as Record<string, unknown>).initialHistory as Record<string, unknown>).payload as Record<string, unknown>;
+    expect(page.messages).toEqual(messages);
+    expect(page).toMatchObject({ hasMore: true, sessionId: nativeSessionId, deltaCursor: "eyJuYXRpdmUiOiJkZWx0YSJ9" });
+    expect(page.completeSnapshot).toBeUndefined();
+    expect(page.olderCursor).toEqual(expect.stringMatching(/^mattermost-history:v1:/u));
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["more native history", { hasMore: true, nextOffset: 80 }],
+    ["a native older cursor", { hasMore: false, olderCursor: "history-page:eyJvbGRlciI6dHJ1ZX0" }],
+  ])("passes a native page with %s through unchanged", async (_label, extra) => {
+    const adapter = createMattermostControlChat({ perUserIdentity: true, authorize: vi.fn() });
+    for (const method of ["chat.history", "chat.startup"]) {
+      const prepared = await adapter.prepare({ type: "req", id: "native", method, params: { sessionKey } }, session());
+      if (prepared?.kind !== "upstream") throw new Error("expected native history pass-through");
+      const upstream = { type: "res", id: "native", ok: true, payload: nativePage([nativeReset(1_000)], extra) };
+      const before = JSON.stringify(upstream);
+      expect(JSON.stringify(prepared.project(upstream))).toBe(before);
+    }
+    const subscription = await adapter.prepare({
+      type: "req", id: "subscribe", method: "sessions.messages.subscribe", params: { key: sessionKey, initialHistory: { limit: 80 } },
+    }, session());
+    if (subscription?.kind !== "upstream") throw new Error("expected native subscription pass-through");
+    const upstream = { type: "res", id: "subscribe", ok: true, payload: {
+      subscribed: true, initialHistory: { ok: true, payload: nativePage([nativeReset(1_000)], extra) },
+    } };
+    const before = JSON.stringify(upstream);
+    expect(JSON.stringify(subscription.project(upstream))).toBe(before);
+  });
+
+  it("forwards native delta and message-anchored history requests without reading Mattermost", async () => {
+    const authorize = vi.fn();
+    const adapter = createMattermostControlChat({ perUserIdentity: true, authorize });
+    for (const params of [
+      { sessionKey, cursor: "eyJuYXRpdmUiOiJkZWx0YSJ9", knownState: { sessionInfo: "r1" }, limit: 80 },
+      { sessionKey, messageId: "native-message-1", sessionId: nativeSessionId, limit: 1 },
+    ]) {
+      const prepared = await adapter.prepare({ type: "req", id: "native", method: "chat.history", params }, session());
+      if (prepared?.kind !== "upstream") throw new Error("expected native history pass-through");
+      expect(prepared.upstreamParams).toBeUndefined();
+      expect(prepared.watch).toBeUndefined();
+      const delta = { type: "res", id: "native", ok: true, payload: {
+        kind: "delta", messages: [], deltaCursor: "eyJuZXh0IjoxfQ", sessionInfo: { sessionId: nativeSessionId },
+      } };
+      expect(prepared.project(delta)).toEqual(delta);
+    }
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("serves Mattermost history older than the native start in pages until the channel begins", async () => {
+    const listChannelPosts = vi.fn(async () => ({ posts: humanPosts([10, 20, 30, 40, 50, 150]), reachedEnd: true }));
+    const authorize = vi.fn(async () => authorized({ listChannelPosts }));
+    const adapter = createMattermostControlChat({ perUserIdentity: true, authorize });
+    const first = await edgeCursorFor(adapter, [nativeReset(100)]);
+    expect(listChannelPosts).not.toHaveBeenCalled();
+
+    const pageOne = await olderPage(adapter, first);
+    expect(pageOne).toMatchObject({ kind: "response", frame: { ok: true, payload: {
+      sessionKey, sessionId: nativeSessionId, hasMore: true,
+    } } });
+    expect(pageTexts(pageOne)).toEqual(["Turn at 40", "Turn at 50"]);
+    const second = responsePayload(pageOne).olderCursor!;
+    expect(second).toEqual(expect.stringMatching(/^mattermost-history:v1:/u));
+    expect(second).not.toBe(first);
+
+    const pageTwo = await olderPage(adapter, second);
+    expect(pageTexts(pageTwo)).toEqual(["Turn at 20", "Turn at 30"]);
+    const third = responsePayload(pageTwo).olderCursor!;
+    expect(third).not.toBe(second);
+
+    const pageThree = await olderPage(adapter, third);
+    expect(pageTexts(pageThree)).toEqual(["Turn at 10"]);
+    expect(pageThree).toMatchObject({ frame: { payload: { hasMore: false } } });
+    expect(responsePayload(pageThree).olderCursor).toBeUndefined();
+    expect(authorize).toHaveBeenCalledTimes(3);
+  });
+
+  it("trims an older page to its byte budget from the oldest side and resumes at the oldest kept post", async () => {
+    const posts = humanPosts([10, 20, 30]);
+    const listChannelPosts = vi.fn(async () => ({ posts, reachedEnd: true }));
+    const adapter = createMattermostControlChat({
+      perUserIdentity: true, authorize: vi.fn(async () => authorized({ listChannelPosts })),
+    });
+    const cursor = await edgeCursorFor(adapter, [nativeReset(100)]);
+    const sizes = responsePayload(await olderPage(adapter, cursor, { limit: 3 })).messages
+      .map((message) => Buffer.byteLength(JSON.stringify(message), "utf8"));
+    const twoNewest = sizes[1]! + sizes[2]! + 3;
+
+    const trimmed = await olderPage(adapter, cursor, { limit: 3, maxBytes: twoNewest });
+    expect(pageTexts(trimmed)).toEqual(["Turn at 20", "Turn at 30"]);
+    expect(responsePayload(trimmed)).toMatchObject({ hasMore: true });
+    expect(JSON.stringify(responsePayload(trimmed).messages).length).toBeLessThanOrEqual(twoNewest);
+    const resumed = await olderPage(adapter, responsePayload(trimmed).olderCursor!, { limit: 3, maxBytes: twoNewest });
+    expect(pageTexts(resumed)).toEqual(["Turn at 10"]);
+    expect(responsePayload(resumed)).toMatchObject({ hasMore: false });
+
+    const oversized = await olderPage(adapter, cursor, { limit: 3, maxBytes: 1 });
+    expect(pageTexts(oversized)).toEqual(["Turn at 30"]);
+    expect(responsePayload(oversized)).toMatchObject({ hasMore: true });
+    expect(pageTexts(await olderPage(adapter, responsePayload(oversized).olderCursor!, { limit: 3, maxBytes: 1 })))
+      .toEqual(["Turn at 20"]);
+  });
+
+  it("drops the Mattermost post that is the oldest native user message at the seam", async () => {
+    const posts = humanPosts([90, 100, 160]);
+    const seamPost = posts[1]!;
+    const listChannelPosts = vi.fn(async () => ({ posts, reachedEnd: true }));
+    const adapter = createMattermostControlChat({
+      perUserIdentity: true, authorize: vi.fn(async () => authorized({ listChannelPosts })),
+    });
+    const cursor = await edgeCursorFor(adapter, [{
+      role: "user",
+      content: [{ type: "text", text: "Turn at 100" }],
+      timestamp: 105,
+      __openclaw: { id: "native-user-1", seq: 1, idempotencyKey: channelSourceTurnKey(seamPost.id) },
+    }, { role: "assistant", content: [{ type: "text", text: "Native answer" }], timestamp: 170, __openclaw: { id: "native-answer-1", seq: 2 } }]);
+
+    const page = await olderPage(adapter, cursor, { limit: 1_000 });
+    expect(responsePayload(page).messages.map((message) => message.__openclaw.id)).toEqual([posts[0]!.id]);
+    expect(page).toMatchObject({ frame: { payload: { hasMore: false } } });
+  });
+
+  it("refuses edge cursors for another session or in malformed form before reading Mattermost", async () => {
+    const log = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const listChannelPosts = vi.fn(async () => ({ posts: humanPosts([10]), reachedEnd: true }));
+    const authorize = vi.fn(async () => authorized({ listChannelPosts }));
+    const adapter = createMattermostControlChat({ perUserIdentity: true, authorize });
+    const replayed = await edgeCursorFor(adapter, [nativeReset(100)], secondSessionKey);
+    const malformed = [
+      replayed,
+      "mattermost-history:v1:not*base64",
+      `mattermost-history:v2:${Buffer.from(JSON.stringify({ v: 1, k: sessionKey, t: 100 })).toString("base64url")}`,
+      `mattermost-history:v1:${Buffer.from(JSON.stringify({ v: 2, k: sessionKey, t: 100 })).toString("base64url")}`,
+      `mattermost-history:v1:${Buffer.from(JSON.stringify({ v: 1, k: sessionKey, t: -1 })).toString("base64url")}`,
+      `mattermost-history:v1:${Buffer.from(JSON.stringify({ v: 1, k: sessionKey, t: 100, extra: true })).toString("base64url")}`,
+      `mattermost-history:v1:${"A".repeat(4_096)}`,
+    ];
+    for (const cursor of malformed) {
+      await expect(olderPage(adapter, cursor)).resolves.toMatchObject({
+        kind: "response", frame: { ok: false, error: { code: "INVALID_REQUEST" } },
+      });
+    }
+    expect(authorize).not.toHaveBeenCalled();
+    expect(listChannelPosts).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("Mattermost Dashboard request failed", expect.objectContaining({
+      method: "chat.history", stage: "cursor",
+    }));
+    expect(JSON.stringify(log.mock.calls)).not.toContain("mattermost-history:");
+    log.mockRestore();
+  });
+
+  it.each([
+    ["a forbidden caller", { forbidden: true }],
+    ["a channel bound to a different agent", { target: { ownerUid: "uid-owner", workspaceSlug: "alice", agentId: "octogee-bob-proj-notes", agentMmUserId } }],
+  ])("denies Mattermost history to %s", async (_label, override) => {
+    const log = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const listChannelPosts = vi.fn(async () => ({ posts: humanPosts([10]), reachedEnd: true }));
+    const adapter = createMattermostControlChat({
+      perUserIdentity: true,
+      authorize: vi.fn(async () => ({ ...authorized({ listChannelPosts }), ...override }) as AuthorizedChannel),
+    });
+    const cursor = await edgeCursorFor(adapter, [nativeReset(100)]);
+    await expect(olderPage(adapter, cursor)).resolves.toMatchObject({
+      kind: "response", frame: { ok: false, error: { code: "FORBIDDEN" } },
+    });
+    expect(listChannelPosts).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it("keeps per-user-off subscriptions native and cursor history requests rejected", async () => {
+    const authorize = vi.fn();
+    const adapter = createMattermostControlChat({ authorize });
+    await expect(adapter.prepare({
+      type: "req", id: "subscribe", method: "sessions.messages.subscribe", params: { key: sessionKey, initialHistory: { limit: 80 } },
+    }, session())).resolves.toBeNull();
+    await expect(adapter.prepare({
+      type: "req", id: "delta", method: "chat.history", params: { sessionKey, cursor: "eyJuYXRpdmUiOiJkZWx0YSJ9" },
+    }, session())).resolves.toMatchObject({ kind: "response", frame: { ok: false, error: { code: "INVALID_REQUEST" } } });
     expect(authorize).not.toHaveBeenCalled();
   });
 });
