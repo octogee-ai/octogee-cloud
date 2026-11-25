@@ -997,7 +997,7 @@ async function readProjectedHistory(authorization, route, requiredMessages, sign
     let historyBytes = 0;
     let projectionPostVisits = 0;
     let nextProjectionPostCount = HISTORY_PAGE_SIZE;
-    while (!reachedEnd && historyNeedsMore(selected, requiredMessages, unresolvedPostIds)) {
+    while (historyNeedsMore(selected, requiredMessages, unresolvedPostIds)) {
         signal?.throwIfAborted();
         const page = await authorization.client.listChannelPosts(route.primaryChannelId, before, HISTORY_PAGE_SIZE);
         signal?.throwIfAborted();

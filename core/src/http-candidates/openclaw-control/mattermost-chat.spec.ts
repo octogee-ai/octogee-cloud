@@ -2245,6 +2245,32 @@ describe("Mattermost history beyond the native transcript for per-user identity"
     expect(authorize).toHaveBeenCalledTimes(3);
   });
 
+  it("trims an older page to its byte budget from the oldest side and resumes at the oldest kept post", async () => {
+    const posts = humanPosts([10, 20, 30]);
+    const listChannelPosts = vi.fn(async () => ({ posts, reachedEnd: true }));
+    const adapter = createMattermostControlChat({
+      perUserIdentity: true, authorize: vi.fn(async () => authorized({ listChannelPosts })),
+    });
+    const cursor = await edgeCursorFor(adapter, [nativeReset(100)]);
+    const sizes = responsePayload(await olderPage(adapter, cursor, { limit: 3 })).messages
+      .map((message) => Buffer.byteLength(JSON.stringify(message), "utf8"));
+    const twoNewest = sizes[1]! + sizes[2]! + 3;
+
+    const trimmed = await olderPage(adapter, cursor, { limit: 3, maxBytes: twoNewest });
+    expect(pageTexts(trimmed)).toEqual(["Turn at 20", "Turn at 30"]);
+    expect(responsePayload(trimmed)).toMatchObject({ hasMore: true });
+    expect(JSON.stringify(responsePayload(trimmed).messages).length).toBeLessThanOrEqual(twoNewest);
+    const resumed = await olderPage(adapter, responsePayload(trimmed).olderCursor!, { limit: 3, maxBytes: twoNewest });
+    expect(pageTexts(resumed)).toEqual(["Turn at 10"]);
+    expect(responsePayload(resumed)).toMatchObject({ hasMore: false });
+
+    const oversized = await olderPage(adapter, cursor, { limit: 3, maxBytes: 1 });
+    expect(pageTexts(oversized)).toEqual(["Turn at 30"]);
+    expect(responsePayload(oversized)).toMatchObject({ hasMore: true });
+    expect(pageTexts(await olderPage(adapter, responsePayload(oversized).olderCursor!, { limit: 3, maxBytes: 1 })))
+      .toEqual(["Turn at 20"]);
+  });
+
   it("drops the Mattermost post that is the oldest native user message at the seam", async () => {
     const posts = humanPosts([90, 100, 160]);
     const seamPost = posts[1]!;
