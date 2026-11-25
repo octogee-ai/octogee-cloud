@@ -1,7 +1,7 @@
 import { GATEWAY_UNREACHABLE_AFTER_MS } from "@octogee/shared/types/fleet-controller";
 import { workspaceDefaultAgentId } from "@octogee/shared/types/identity";
 import { ephemeralSourceMatches, excludedDisklessActivation, excludedDisklessWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
-import { parseWorkspaceCheckpoint } from "./gateway-schedule-checkpoint.js";
+import { parseWorkspaceCheckpoint, unsettledUserFences } from "./gateway-schedule-checkpoint.js";
 import { readSharedGatewayAutoscalingConfigInStore, readSharedGatewayPoolConfigInStore } from "./shared-gateway-pool-read.js";
 import { isDeepStrictEqual } from "node:util";
 import { resolveGatewayRuntime, resolveUserGatewayControlState, readSchedulerMigrationIdentity, } from "@octogee/shared/types/glm";
@@ -1233,7 +1233,7 @@ function assertDisklessSource(input, user, source, assignment, targetAlreadyRese
         throw new FleetStatePreconditionError("diskless return waits for verified exclusion of the original writer");
     }
     assertRestoreUnfenced(user);
-    if (Object.keys(user.fences).length || !assignment || assignment.slug !== input.slug ||
+    if (unsettledUserFences(user.fences).length || !assignment || assignment.slug !== input.slug ||
         assignment.state !== "serving" || user.gateway?.gatewayId !== input.fromGatewayId || targetAlreadyReserved) {
         throw new FleetStatePreconditionError("diskless return source assignment changed");
     }

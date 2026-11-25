@@ -164,6 +164,24 @@ describe("durable scheduler checkpoints", () => {
     await expect(recordGatewayWorkspaceCheckpoint({ ...report, commits: { workspace: "a".repeat(40) } })).resolves.toBe("user_fenced");
   });
 
+  it("accepts checkpoints once the owner's runtime reset is acknowledged and refuses them while it is pending", async () => {
+    const { docs, report } = harness();
+    const key = `gateways/${gatewayId}`;
+    docs.set(key, { ...docs.get(key), gatewayClass: "shared", allocation: undefined, ownerUid: null, builderSlug: null });
+    docs.set(`glmGateways/${gatewayId}`, registryWithPod());
+    const reset = { uid, slug: "alice", operationId: "reset-one", sourceGatewayId: "alice-s-1", targetGatewayId: "shared-gone",
+      generation: 2, disposableLeaseId: "lease-one", disposableLeaseGeneration: 1, requestedAt: 1_000 };
+    const retain = (runtimeReset: Record<string, unknown>) => docs.set(`users/${uid}`, {
+      provisioning: { openclaw: { slug: "alice", gatewayId, runtimeReset } },
+    });
+    retain({ ...reset, status: "acknowledged", acknowledgedAt: 1_500 });
+    await expect(recordGatewayScheduleCheckpoint(report)).resolves.toBe("accepted");
+    await expect(recordGatewayWorkspaceCheckpoint({ ...report, observedAt: 4_050, commits: { workspace: "a".repeat(40) } })).resolves.toBe("accepted");
+    retain({ ...reset, status: "pending" });
+    await expect(recordGatewayScheduleCheckpoint({ ...report, observedAt: 4_060 })).resolves.toBe("user_fenced");
+    await expect(recordGatewayWorkspaceCheckpoint({ ...report, observedAt: 4_070, commits: { workspace: "b".repeat(40) } })).resolves.toBe("user_fenced");
+  });
+
   it("keeps fencing a completed retirement whose journaled return did not succeed with that cutover", async () => {
     const { docs, report } = harness();
     const key = `gateways/${gatewayId}`;

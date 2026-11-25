@@ -2,7 +2,10 @@ import { parseAgentId } from "@octogee/shared/types/identity";
 import { GATEWAY_UNREACHABLE_AFTER_MS, type NativeScheduleCheckpoint } from "@octogee/shared/types/fleet-controller";
 import { gatewayVmPodName } from "@octogee/shared/types/glm";
 import { sameEphemeralWriter } from "./isolated-gateway-lifecycle/ephemeral-recovery-state.js";
-import type { EphemeralGatewayWriter, FleetRegistryRecord, GatewayAssignment, GatewayRoot, OperationRecord, PlatformStateStore, PlatformStateTransaction, PlatformUserRecord, Stored } from "./platform-state/index.js";
+import type {
+  EphemeralGatewayWriter, FleetRegistryRecord, GatewayAssignment, GatewayRoot, OperationRecord, PlatformStateStore,
+  PlatformStateTransaction, PlatformUserRecord, Stored, UserFenceName, UserFences,
+} from "./platform-state/index.js";
 
 const MAX_CHECKPOINT_AGE_MS = 60_000;
 
@@ -118,11 +121,17 @@ function returnOperationCompletes(operation: OperationRecord | null, retirement:
     operation.input.fromGatewayId === retirement.sourceGatewayId && operation.input.toGatewayId === retirement.sharedGatewayId;
 }
 
-async function activeFences(tx: PlatformStateTransaction, user: PlatformUserRecord): Promise<string[]> {
+export function unsettledUserFences(fences: UserFences): UserFenceName[] {
+  const { runtimeReset, ...others } = fences;
+  const names = Object.keys(others) as UserFenceName[];
+  return runtimeReset === undefined || runtimeReset.status === "acknowledged" ? names : [...names, "runtimeReset"];
+}
+
+async function activeFences(tx: PlatformStateTransaction, user: PlatformUserRecord): Promise<UserFenceName[]> {
   const { pendingNativeSchedulerRetirement: retirement, ...fences } = user.fences;
   const dormant = retirement === undefined || (completedOwnRetirement(user, retirement) &&
     returnOperationCompletes(await tx.journal.operations.get(retirement.returnOperationId), retirement));
-  return [...Object.keys(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement"])];
+  return [...unsettledUserFences(fences), ...(dormant ? [] : ["pendingNativeSchedulerRetirement" as const])];
 }
 
 type CheckpointOwner = { user: Stored<PlatformUserRecord>; assignment: GatewayAssignment };
