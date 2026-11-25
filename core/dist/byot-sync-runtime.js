@@ -4,7 +4,6 @@ import * as os from "os";
 import * as fs from "fs";
 import { applyByotState, byosDefaultAgentConfigPatch, defaultAgentExists, defaultAgentPatch, defaultAgentPatchReplacePaths, deriveDesiredByotState, HOUSE_MODEL_DEFAULT_AGENT_TOOLS, isPlatformProviderRef, platformDefaultAgentModelInputForUser, platformProjectAgentModelForUser, ISOLATED_CODEX_APP_SERVER, STANDARD_CODEX_APP_SERVER, } from "./byot-sync.js";
 import { createGatewayRpc, OpenclawWireError } from "./gateway-rpc.js";
-import { fingerprintDefaultAgentRuntimePolicy, reconcileDefaultAgentRuntimeSessionPolicy, } from "./default-agent-session-policy.js";
 import { internalFetch } from "./internal-fetch.js";
 import { claudeCliRuntimeConfig, codexRuntimeConfig, isModelCredentialOauthProvider, OPENAI_CODEX_DEFAULT_PROFILE_ID, } from "./model-credential-materializer.js";
 import { codexAgentDir, purgeUserOauthRuntimeArtifacts, removeStaleCodexAuthJson, removeSubscriptionProfiles, restoreByosubCredentials, sharedAuthAgentDir, } from "./byosub-restore.js";
@@ -1250,43 +1249,6 @@ export async function purgeUserOauthRuntime(slug, safeModelRef, deps) {
         .some(Boolean);
     return { changed, resetCount };
 }
-function defaultAgentSessionsForAgent(sessions, agentId) {
-    const prefix = `agent:${agentId}:`;
-    return sessions.filter((session) => session.agentId === agentId && session.key.startsWith(prefix));
-}
-export async function refreshDefaultAgentRuntimeSessions(slug, deps) {
-    const agentId = `octogee-${slug}-coach`;
-    const config = deps?.config ?? readOpenClawConfig();
-    const agentDir = deps?.agentDir ?? path.join(AGENTS_DIR, agentId, "agent");
-    const suppliedRpc = deps?.rpc;
-    const rpc = suppliedRpc ?? createGatewayRpc({
-        allowLegacyGatewayTokenFallback: true,
-        connectTimeoutMs: 10_000,
-        callTimeoutMs: 10_000,
-    });
-    try {
-        const fingerprint = fingerprintDefaultAgentRuntimePolicy(config, agentId);
-        return await reconcileDefaultAgentRuntimeSessionPolicy({
-            agentDir,
-            fingerprint,
-            resetSessions: async () => {
-                const response = await rpc.sessionsList({ agentId });
-                const sessions = defaultAgentSessionsForAgent(response.sessions, agentId);
-                if (sessions.some((session) => session.hasActiveRun === true)) {
-                    throw new Error(`coach runtime policy: ${agentId} has an active runtime session`);
-                }
-                for (const session of sessions) {
-                    await rpc.sessionsReset({ key: session.key, agentId, reason: "reset" });
-                }
-                return sessions.length;
-            },
-        });
-    }
-    finally {
-        if (!suppliedRpc)
-            await rpc.close();
-    }
-}
 function mountedAgentIdsForSlug(slug) {
     try {
         const mounted = agentIdsForSlug(slug, readOpenClawConfig());
@@ -1408,9 +1370,6 @@ function syncActions(deps) {
             })),
         applyAgentModelOverrides: deps?.applyAgentModelOverrides ??
             ((slug, agentModels, opts) => applyAgentModelOverrides(slug, agentModels, opts, patchDeps)),
-        ...(deps?.refreshDefaultAgentRuntimeSessions
-            ? { refreshDefaultAgentRuntimeSessions: deps.refreshDefaultAgentRuntimeSessions }
-            : {}),
         hasPendingPlatformCatalogRestart: deps?.hasPendingPlatformCatalogRestart ?? hasPendingPlatformCatalogRestart,
         markPlatformCatalogRestartPending: deps?.markPlatformCatalogRestartPending ?? markPlatformCatalogRestartPending,
         clearPlatformCatalogRestartPending: deps?.clearPlatformCatalogRestartPending ?? clearPlatformCatalogRestartPending,
@@ -1598,7 +1557,6 @@ export async function syncByotForUser(userData, deps) {
         houseOnly,
         logFn,
     });
-    await refreshProvisionedDefaultAgentRuntimeSessions(slug, userData, actions, logFn);
 }
 // The operator's user agent default fills in for an agent with no explicit
 // pick — exactly the "config default stands" case (catalog plan, no BYOT, no
@@ -1675,16 +1633,6 @@ function catalogOnlyAgentModels(slug, value, safeDefault, logFn) {
         safe[agentId] = { primary, fallbacks };
     }
     return Object.keys(safe).length > 0 ? safe : undefined;
-}
-async function refreshProvisionedDefaultAgentRuntimeSessions(slug, userData, actions, logFn) {
-    if (userData.provisioning?.openclaw?.status !== "complete")
-        return;
-    if (!actions.refreshDefaultAgentRuntimeSessions)
-        return;
-    const sessionRefresh = await actions.refreshDefaultAgentRuntimeSessions(slug);
-    if (sessionRefresh.refreshed) {
-        logFn(`[byot-sync] ${slug}: refreshed ${sessionRefresh.resetCount} agent runtime session(s) for current policy`);
-    }
 }
 // When a default-agent-model patch ships it converges tools inline; whenever no patch
 // will ship — config-default agent (catalog, no BYOK, no pick) OR a

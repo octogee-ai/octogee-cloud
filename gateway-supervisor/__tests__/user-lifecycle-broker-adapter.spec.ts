@@ -6699,7 +6699,6 @@ describe("buildBrokeredLifecycleAdapter byot re-assert (db-less LLM-auth self-he
       userData,
       expect.objectContaining({
         applyConfigPatch: expect.any(Function),
-        refreshDefaultAgentRuntimeSessions: expect.any(Function),
       }),
     );
 

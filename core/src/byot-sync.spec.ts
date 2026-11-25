@@ -85,7 +85,6 @@ import {
   userOauthRuntimeConfigPatch,
   userMountConfigPatch,
   purgeUserOauthRuntime,
-  refreshDefaultAgentRuntimeSessions,
 } from "./byot-sync-runtime.js";
 import { internalFetch } from "./internal-fetch.js";
 import type { ApplyConfigPatchOptions } from "./apply-config-patch.js";
@@ -2323,84 +2322,6 @@ describe("user OAuth runtime purge", () => {
   });
 });
 
-describe("coach runtime session policy refresh", () => {
-  it("resets only this agent's sessions once for each policy transition, including upgrade and downgrade", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-coach-runtime-policy-"));
-    const agentDir = path.join(root, "agent");
-    fs.mkdirSync(agentDir, { recursive: true });
-    const userDefaultAgentId = "octogee-tester-70-coach";
-    const rpc = {
-      sessionsList: vi.fn(async () => ({
-        sessions: [
-          { key: `agent:${userDefaultAgentId}:mattermost:group:one`, agentId: userDefaultAgentId },
-          { key: "agent:octogee-someone-else-coach:mattermost:group:two", agentId: "octogee-someone-else-coach" },
-        ],
-      })),
-      sessionsReset: vi.fn(async () => ({ ok: true as const })),
-      close: vi.fn(async () => {}),
-    };
-    const free = {
-      tools: { profile: "minimal", alsoAllow: ["octogee_ask_ops"] },
-      agents: { list: [{ id: userDefaultAgentId, model: "platform-openrouter/deepseek/deepseek-v4-pro" }] },
-    };
-    const trial = {
-      tools: { profile: "coding", alsoAllow: ["octogee_ask_ops"] },
-      agents: { list: [{ id: userDefaultAgentId, model: "platform-openrouter/z-ai/glm-5.2" }] },
-    };
-
-    try {
-      await expect(refreshDefaultAgentRuntimeSessions("tester-70", { agentDir, config: free, rpc })).resolves.toEqual({
-        refreshed: true,
-        resetCount: 1,
-      });
-      await expect(refreshDefaultAgentRuntimeSessions("tester-70", { agentDir, config: free, rpc })).resolves.toEqual({
-        refreshed: false,
-        resetCount: 0,
-      });
-      await expect(refreshDefaultAgentRuntimeSessions("tester-70", { agentDir, config: trial, rpc })).resolves.toEqual({
-        refreshed: true,
-        resetCount: 1,
-      });
-      await expect(refreshDefaultAgentRuntimeSessions("tester-70", { agentDir, config: free, rpc })).resolves.toEqual({
-        refreshed: true,
-        resetCount: 1,
-      });
-
-      expect(rpc.sessionsReset).toHaveBeenCalledTimes(3);
-      expect(rpc.sessionsReset).toHaveBeenCalledWith({
-        key: `agent:${userDefaultAgentId}:mattermost:group:one`, agentId: userDefaultAgentId, reason: "reset",
-      });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("leaves its marker unchanged when an active agent session cannot safely reset", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "octogee-coach-runtime-policy-"));
-    const agentDir = path.join(root, "agent");
-    fs.mkdirSync(agentDir, { recursive: true });
-    const userDefaultAgentId = "octogee-tester-70-coach";
-    const rpc = {
-      sessionsList: vi.fn(async () => ({
-        sessions: [{ key: `agent:${userDefaultAgentId}:mattermost:group:one`, agentId: userDefaultAgentId, hasActiveRun: true }],
-      })),
-      sessionsReset: vi.fn(async () => ({ ok: true as const })),
-      close: vi.fn(async () => {}),
-    };
-    const config = { agents: { list: [{ id: userDefaultAgentId }] } };
-
-    try {
-      await expect(refreshDefaultAgentRuntimeSessions("tester-70", { agentDir, config, rpc })).rejects.toThrow(
-        "active runtime session",
-      );
-      expect(rpc.sessionsReset).not.toHaveBeenCalled();
-      expect(fs.existsSync(path.join(agentDir, ".octogee-session-policy.json"))).toBe(false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("standard gateway — BYOS materialization", () => {
   it("threads an injected config writer through the default agent model patch", async () => {
     const configWriter = vi.fn(async () => ({ mode: "rpc" as const, attempts: 1 }));
@@ -2429,7 +2350,6 @@ describe("standard gateway — BYOS materialization", () => {
     const applyDefaultAgentModelPatchFn = vi.fn(async () => true);
     const applyDefaultAgentToolsConvergenceFn = vi.fn(async () => true);
     const triggerSecretsReloadFn = vi.fn(async () => {});
-    const refreshDefaultAgentRuntimeSessionsFn = vi.fn(async () => ({ refreshed: true, resetCount: 1 }));
 
     await syncByotForUser(
       {
@@ -2444,7 +2364,6 @@ describe("standard gateway — BYOS materialization", () => {
         applyDefaultAgentModelPatch: applyDefaultAgentModelPatchFn,
         applyDefaultAgentToolsConvergence: applyDefaultAgentToolsConvergenceFn,
         triggerSecretsReload: triggerSecretsReloadFn,
-        refreshDefaultAgentRuntimeSessions: refreshDefaultAgentRuntimeSessionsFn,
       },
     );
 
@@ -2452,7 +2371,6 @@ describe("standard gateway — BYOS materialization", () => {
     expect(applyDefaultAgentModelPatchFn).not.toHaveBeenCalled();
     expect(applyDefaultAgentToolsConvergenceFn).toHaveBeenCalledWith("tester-70", false);
     expect(triggerSecretsReloadFn).not.toHaveBeenCalled();
-    expect(refreshDefaultAgentRuntimeSessionsFn).toHaveBeenCalledWith("tester-70");
   });
 
   it("broker-token gateway: anthropic BYOT is broker-resolved, not materialized locally", async () => {
