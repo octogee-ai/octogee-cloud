@@ -6,7 +6,6 @@ import {
   platformModelAllowlistPatch,
   brokerFetchByosubCreds,
   restoreOauthStoreForSlug,
-  refreshDefaultAgentRuntimeSessions,
   syncByotForUser,
   triggerSecretsReload,
   type SyncByotForUserDeps,
@@ -49,7 +48,6 @@ export {
   platformModelAllowlistPatch,
   applyDefaultAgentModelPatch as applyModelCredentialDefaultAgentPatch,
   brokerFetchByosubCreds as brokerFetchModelCredentialOauthCreds,
-  refreshDefaultAgentRuntimeSessions as refreshModelCredentialRuntimeSessions,
   restoreOauthStoreForSlug as restoreModelCredentialOauthStoreForSlug,
   triggerSecretsReload as triggerModelCredentialSecretsReload,
 };

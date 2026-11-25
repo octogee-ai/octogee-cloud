@@ -157,7 +157,6 @@ import {
   userMountConfigPatch,
   userSecurityProjectionReplacePaths,
   platformModelAllowlistPatch,
-  refreshModelCredentialRuntimeSessions,
   restoreModelCredentialOauthStoreForSlug,
   syncModelCredentialsForUser,
 } from "./model-credential-sync-runtime.js";
@@ -2911,7 +2910,6 @@ export function buildBrokeredLifecycleAdapter(
         {
           applyConfigPatch: (args, options) =>
             applyConfigPatch(args, { ...options, rpc: ctx.rpc, cache: ctx.configCache }),
-          refreshDefaultAgentRuntimeSessions: refreshModelCredentialRuntimeSessions,
           triggerSecretsReload: () => reloadRuntimeSecrets(ctx, "[byot-sync]"),
         },
       ),

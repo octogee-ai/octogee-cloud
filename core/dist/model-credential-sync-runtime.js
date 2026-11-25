@@ -1,4 +1,4 @@
-import { PLATFORM_MODEL_POLICY_ALLOW_PATH, applyDefaultAgentModelPatch, userMountConfigPatch, userSecurityProjectionReplacePaths, platformModelAllowlistPatch, brokerFetchByosubCreds, restoreOauthStoreForSlug, refreshDefaultAgentRuntimeSessions, syncByotForUser, triggerSecretsReload, } from "./byot-sync-runtime.js";
+import { PLATFORM_MODEL_POLICY_ALLOW_PATH, applyDefaultAgentModelPatch, userMountConfigPatch, userSecurityProjectionReplacePaths, platformModelAllowlistPatch, brokerFetchByosubCreds, restoreOauthStoreForSlug, syncByotForUser, triggerSecretsReload, } from "./byot-sync-runtime.js";
 import { legacyByotSyncUserDataFromModelCredentialState, } from "./model-credential-sync.js";
 function legacyDepsFromModelCredentialDeps(deps) {
     if (!deps)
@@ -12,4 +12,4 @@ function legacyDepsFromModelCredentialDeps(deps) {
 export async function syncModelCredentialsForUser(userData, deps) {
     await syncByotForUser(legacyByotSyncUserDataFromModelCredentialState(userData), legacyDepsFromModelCredentialDeps(deps));
 }
-export { PLATFORM_MODEL_POLICY_ALLOW_PATH, userMountConfigPatch, userSecurityProjectionReplacePaths, platformModelAllowlistPatch, applyDefaultAgentModelPatch as applyModelCredentialDefaultAgentPatch, brokerFetchByosubCreds as brokerFetchModelCredentialOauthCreds, refreshDefaultAgentRuntimeSessions as refreshModelCredentialRuntimeSessions, restoreOauthStoreForSlug as restoreModelCredentialOauthStoreForSlug, triggerSecretsReload as triggerModelCredentialSecretsReload, };
+export { PLATFORM_MODEL_POLICY_ALLOW_PATH, userMountConfigPatch, userSecurityProjectionReplacePaths, platformModelAllowlistPatch, applyDefaultAgentModelPatch as applyModelCredentialDefaultAgentPatch, brokerFetchByosubCreds as brokerFetchModelCredentialOauthCreds, restoreOauthStoreForSlug as restoreModelCredentialOauthStoreForSlug, triggerSecretsReload as triggerModelCredentialSecretsReload, };

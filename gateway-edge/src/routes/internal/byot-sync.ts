@@ -1,10 +1,7 @@
 import { clientRequestLimit } from "@octogee/core/http/authenticated-request-limit";
 import { Router, Request, Response, NextFunction } from "express";
 import { applyConfigPatch } from "@octogee/core/apply-config-patch";
-import {
-  refreshModelCredentialRuntimeSessions,
-  syncModelCredentialsForUser,
-} from "@octogee/core/model-credential-sync-runtime";
+import { syncModelCredentialsForUser } from "@octogee/core/model-credential-sync-runtime";
 import { acquireSystemConfigMutationLease } from "@octogee/core/system-config-mutation-lease";
 import { requireByotSyncInternalAuth } from "@octogee/core/model-credentials/byot-sync-auth";
 
@@ -67,10 +64,7 @@ router.post(
         res.status(400).json({ error: "username, planInputs and provisioning.openclaw.status required" });
         return;
       }
-      await syncModelCredentialsForUser(req.body, {
-        applyConfigPatch: modelConfigWriter,
-        refreshDefaultAgentRuntimeSessions: refreshModelCredentialRuntimeSessions,
-      });
+      await syncModelCredentialsForUser(req.body, { applyConfigPatch: modelConfigWriter });
       res.json({ ok: true });
     } catch (e) {
       next(e);

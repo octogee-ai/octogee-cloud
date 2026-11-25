@@ -72,7 +72,6 @@ export interface SyncByotForUserDeps {
     materializePlatformBrokerSurfaces?: (slug: string) => Promise<boolean> | boolean;
     purgeUserOauthRuntime?: typeof purgeUserOauthRuntime;
     applyAgentModelOverrides?: typeof applyAgentModelOverrides;
-    refreshDefaultAgentRuntimeSessions?: typeof refreshDefaultAgentRuntimeSessions;
     hasPendingPlatformCatalogRestart?: () => boolean;
     markPlatformCatalogRestartPending?: () => void;
     clearPlatformCatalogRestartPending?: () => void;
@@ -104,14 +103,6 @@ export declare function purgeUserOauthRuntime(slug: string, safeModelRef: string
     resetCount: number;
 }>;
 type SessionPolicyRpc = Pick<GatewayRpcClient, "sessionsList" | "sessionsReset" | "close">;
-export declare function refreshDefaultAgentRuntimeSessions(slug: string, deps?: {
-    agentDir?: string;
-    config?: unknown;
-    rpc?: SessionPolicyRpc;
-}): Promise<{
-    refreshed: boolean;
-    resetCount: number;
-}>;
 export declare const PLATFORM_MODEL_POLICY_ALLOW_PATH = "agents.defaults.modelPolicy.allow";
 export interface PlatformModelAllowlistPatch {
     agents: {

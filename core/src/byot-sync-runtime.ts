@@ -19,10 +19,6 @@ import {
   type CodexAppServerPatch,
 } from "./byot-sync.js";
 import { createGatewayRpc, OpenclawWireError, type GatewayRpcClient } from "./gateway-rpc.js";
-import {
-  fingerprintDefaultAgentRuntimePolicy,
-  reconcileDefaultAgentRuntimeSessionPolicy,
-} from "./default-agent-session-policy.js";
 import { internalFetch } from "./internal-fetch.js";
 import {
   claudeCliRuntimeConfig,
@@ -707,7 +703,6 @@ export interface SyncByotForUserDeps {
   materializePlatformBrokerSurfaces?: (slug: string) => Promise<boolean> | boolean;
   purgeUserOauthRuntime?: typeof purgeUserOauthRuntime;
   applyAgentModelOverrides?: typeof applyAgentModelOverrides;
-  refreshDefaultAgentRuntimeSessions?: typeof refreshDefaultAgentRuntimeSessions;
   hasPendingPlatformCatalogRestart?: () => boolean;
   markPlatformCatalogRestartPending?: () => void;
   clearPlatformCatalogRestartPending?: () => void;
@@ -727,7 +722,6 @@ interface SyncByotActions {
   materializePlatformBrokerSurfaces: (slug: string) => Promise<boolean> | boolean;
   purgeUserOauthRuntime: typeof purgeUserOauthRuntime;
   applyAgentModelOverrides: typeof applyAgentModelOverrides;
-  refreshDefaultAgentRuntimeSessions?: typeof refreshDefaultAgentRuntimeSessions;
   hasPendingPlatformCatalogRestart: () => boolean;
   markPlatformCatalogRestartPending: () => void;
   clearPlatformCatalogRestartPending: () => void;
@@ -1714,53 +1708,6 @@ export async function purgeUserOauthRuntime(
 
 type SessionPolicyRpc = Pick<GatewayRpcClient, "sessionsList" | "sessionsReset" | "close">;
 
-function defaultAgentSessionsForAgent(
-  sessions: Awaited<ReturnType<GatewayRpcClient["sessionsList"]>>["sessions"],
-  agentId: string,
-) {
-  const prefix = `agent:${agentId}:`;
-  return sessions.filter((session) => session.agentId === agentId && session.key.startsWith(prefix));
-}
-
-export async function refreshDefaultAgentRuntimeSessions(
-  slug: string,
-  deps?: {
-    agentDir?: string;
-    config?: unknown;
-    rpc?: SessionPolicyRpc;
-  },
-): Promise<{ refreshed: boolean; resetCount: number }> {
-  const agentId = `octogee-${slug}-coach`;
-  const config = deps?.config ?? readOpenClawConfig();
-  const agentDir = deps?.agentDir ?? path.join(AGENTS_DIR, agentId, "agent");
-  const suppliedRpc = deps?.rpc;
-  const rpc = suppliedRpc ?? createGatewayRpc({
-    allowLegacyGatewayTokenFallback: true,
-    connectTimeoutMs: 10_000,
-    callTimeoutMs: 10_000,
-  });
-  try {
-    const fingerprint = fingerprintDefaultAgentRuntimePolicy(config, agentId);
-    return await reconcileDefaultAgentRuntimeSessionPolicy({
-      agentDir,
-      fingerprint,
-      resetSessions: async () => {
-        const response = await rpc.sessionsList({ agentId });
-        const sessions = defaultAgentSessionsForAgent(response.sessions, agentId);
-        if (sessions.some((session) => session.hasActiveRun === true)) {
-          throw new Error(`coach runtime policy: ${agentId} has an active runtime session`);
-        }
-        for (const session of sessions) {
-          await rpc.sessionsReset({ key: session.key, agentId, reason: "reset" });
-        }
-        return sessions.length;
-      },
-    });
-  } finally {
-    if (!suppliedRpc) await rpc.close();
-  }
-}
-
 function mountedAgentIdsForSlug(slug: string): string[] {
   try {
     const mounted = agentIdsForSlug(slug, readOpenClawConfig());
@@ -1918,9 +1865,6 @@ function syncActions(deps?: SyncByotForUserDeps): SyncByotActions {
     applyAgentModelOverrides:
       deps?.applyAgentModelOverrides ??
       ((slug, agentModels, opts) => applyAgentModelOverrides(slug, agentModels, opts, patchDeps)),
-    ...(deps?.refreshDefaultAgentRuntimeSessions
-      ? { refreshDefaultAgentRuntimeSessions: deps.refreshDefaultAgentRuntimeSessions }
-      : {}),
     hasPendingPlatformCatalogRestart:
       deps?.hasPendingPlatformCatalogRestart ?? hasPendingPlatformCatalogRestart,
     markPlatformCatalogRestartPending:
@@ -2243,8 +2187,6 @@ export async function syncByotForUser(
       logFn,
     },
   );
-
-  await refreshProvisionedDefaultAgentRuntimeSessions(slug, userData, actions, logFn);
 }
 
 // The operator's user agent default fills in for an agent with no explicit
@@ -2360,22 +2302,6 @@ function catalogOnlyAgentModels(
     safe[agentId] = { primary, fallbacks };
   }
   return Object.keys(safe).length > 0 ? safe : undefined;
-}
-
-async function refreshProvisionedDefaultAgentRuntimeSessions(
-  slug: string,
-  userData: SyncByotUserData,
-  actions: SyncByotActions,
-  logFn: (message: string) => void,
-): Promise<void> {
-  if (userData.provisioning?.openclaw?.status !== "complete") return;
-  if (!actions.refreshDefaultAgentRuntimeSessions) return;
-  const sessionRefresh = await actions.refreshDefaultAgentRuntimeSessions(slug);
-  if (sessionRefresh.refreshed) {
-    logFn(
-      `[byot-sync] ${slug}: refreshed ${sessionRefresh.resetCount} agent runtime session(s) for current policy`,
-    );
-  }
 }
 
 // When a default-agent-model patch ships it converges tools inline; whenever no patch
