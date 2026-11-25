@@ -104,7 +104,7 @@ function audits(): Data[] {
 
 beforeEach(() => {
   records.clear();
-  records.set("config/orchestrator", { sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 4 } });
+  records.set("config/orchestrator", { sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 4, minGateways: 0, maxGateways: 6 } });
 });
 
 describe("GET /fleet/state", () => {
@@ -120,7 +120,7 @@ describe("GET /fleet/state", () => {
     expect(res.body.generatedAt).toBe(NOW);
     expect(res.body.fleetControllerStartedAt).toBe(CONTROLLER_STARTED_AT);
     expect(res.body.platformArtifactHash).toBe(releasePayloadHash(PLATFORM));
-    expect(res.body.config.sharedGatewayAutoscaling).toMatchObject({ enabled: true, buildersPerGateway: 4 });
+    expect(res.body.config.sharedGatewayAutoscaling).toEqual({ enabled: true, buildersPerGateway: 4, minGateways: 0, maxGateways: 6 });
     expect(res.body.sharedPoolAutomation).toMatchObject({ actionSequence: 3 });
     expect(res.body.gateways.map((gateway: Data) => gateway.gatewayId).sort()).toEqual(["shared-aaaaaaaaaaaa", "shared-bbbbbbbbbbbb"]);
     expect(res.body.latestReleasePayloadHashes).toEqual({

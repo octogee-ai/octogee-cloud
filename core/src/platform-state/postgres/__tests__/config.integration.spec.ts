@@ -36,6 +36,7 @@ const POD: GatewaySizingProfile = {
   fallbackStorageGb: null,
   computer: { runtime: "cluster", homeSizeGiB: 10 },
 };
+const AUTOSCALING = { enabled: true, buildersPerGateway: 4, minGateways: 1, maxGateways: 8 };
 const SIZING_PROFILES: Record<string, GatewaySizingProfile> = { hobby: HOBBY, pod: POD, enterprise: { isolation: "shared" } };
 
 async function failure(promise: Promise<unknown>): Promise<unknown> {
@@ -70,7 +71,7 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
       await orchestrator().patch({ defaultGatewayId: "shared-0" });
 
       expect(await orchestrator().get()).toEqual({
-        sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 10 },
+        sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 10, minGateways: 1, maxGateways: 32 },
         sizingProfiles: {},
         defaultGatewayId: "shared-0",
         disposableGatewayIdleMs: null,
@@ -83,11 +84,15 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
     });
 
     it("patches only the fields given and clears the ones asked for", async () => {
-      await orchestrator().patch({ sharedGatewayAutoscaling: { enabled: false, buildersPerGateway: 4 }, placementUpdatedAt: NOW, placementUpdatedBy: "uid-admin" });
+      await orchestrator().patch({
+        sharedGatewayAutoscaling: { enabled: false, buildersPerGateway: 4, minGateways: 0, maxGateways: 6 },
+        placementUpdatedAt: NOW,
+        placementUpdatedBy: "uid-admin",
+      });
       await orchestrator().patch({ disposableGatewayIdleMs: 0, defaultGatewayId: "shared-0" });
 
       expect(await orchestrator().get()).toEqual({
-        sharedGatewayAutoscaling: { enabled: false, buildersPerGateway: 4 },
+        sharedGatewayAutoscaling: { enabled: false, buildersPerGateway: 4, minGateways: 0, maxGateways: 6 },
         sizingProfiles: {},
         defaultGatewayId: "shared-0",
         disposableGatewayIdleMs: 0,
@@ -136,8 +141,10 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
 
     it("refuses to store invalid autoscaling, sizing profiles or idle time", async () => {
       const refused = await Promise.all([
-        failure(orchestrator().patch({ sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 1 } })),
-        failure(orchestrator().patch({ sharedGatewayAutoscaling: { enabled: "yes" as never, buildersPerGateway: 4 } })),
+        failure(orchestrator().patch({ sharedGatewayAutoscaling: { ...AUTOSCALING, buildersPerGateway: 1 } })),
+        failure(orchestrator().patch({ sharedGatewayAutoscaling: { ...AUTOSCALING, enabled: "yes" as never } })),
+        failure(orchestrator().patch({ sharedGatewayAutoscaling: { ...AUTOSCALING, minGateways: 3, maxGateways: 2 } })),
+        failure(orchestrator().patch({ sharedGatewayAutoscaling: { ...AUTOSCALING, minGateways: 0, maxGateways: 0 } })),
         failure(orchestrator().patch({ sizingProfiles: { hobby: { isolation: "isolated" } as never } })),
         failure(orchestrator().patch({ disposableGatewayIdleMs: -1 })),
         failure(orchestrator().patch({ disposableGatewayIdleMs: 1.5 })),
@@ -147,11 +154,20 @@ describe.skipIf(!dsn)("PostgreSQL config", { timeout: 30_000 }, () => {
     });
 
     it("holds the stored autoscaling to the shared parser's bounds", async () => {
-      await orchestrator().patch({ sharedGatewayAutoscaling: { enabled: true, buildersPerGateway: 2 } });
+      await orchestrator().patch({ sharedGatewayAutoscaling: { ...AUTOSCALING, buildersPerGateway: 2 } });
 
-      expect(await failure(harness.query("UPDATE $schema.orchestrator_config SET shared_users_per_gateway = 1"))).toMatchObject({ code: "23514" });
-      expect(await failure(harness.query("UPDATE $schema.orchestrator_config SET shared_autoscaling_enabled = NULL"))).toMatchObject({ code: "23514" });
-      expect((await orchestrator().get())?.sharedGatewayAutoscaling).toEqual({ enabled: true, buildersPerGateway: 2 });
+      for (const assignment of [
+        "shared_users_per_gateway = 1",
+        "shared_autoscaling_enabled = NULL",
+        "shared_min_gateways = -1",
+        "shared_max_gateways = 0, shared_min_gateways = 0",
+        "shared_min_gateways = 3, shared_max_gateways = 2",
+        "shared_min_gateways = NULL",
+        "shared_max_gateways = NULL",
+      ]) {
+        expect(await failure(harness.query(`UPDATE $schema.orchestrator_config SET ${assignment}`))).toMatchObject({ code: "23514" });
+      }
+      expect((await orchestrator().get())?.sharedGatewayAutoscaling).toEqual({ ...AUTOSCALING, buildersPerGateway: 2 });
     });
 
     it("hands placement automation to the client and records the fleet controller's yield", async () => {

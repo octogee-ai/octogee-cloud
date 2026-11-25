@@ -3,13 +3,13 @@ export declare const SHARED_POOL_SLOT_ID_PATTERN: RegExp;
 export declare const SHARED_POOL_SLOT_ID_REQUIREMENT = "a shared gatewayId must be \"shared-\" followed by lowercase letters or digits";
 export declare const DEFAULT_SHARED_GATEWAY_AUTOSCALING_ENABLED = true;
 export declare const DEFAULT_SHARED_GATEWAY_USERS_PER_GATEWAY = 10;
+export declare const DEFAULT_SHARED_GATEWAY_MIN_GATEWAYS = 1;
+export declare const DEFAULT_SHARED_GATEWAY_MAX_GATEWAYS = 32;
 export interface SharedGatewayAutoscalingConfig {
     enabled: boolean;
     buildersPerGateway: number;
-}
-export interface SharedPoolReplicaBounds {
-    minReplicas: number;
-    maxReplicas: number;
+    minGateways: number;
+    maxGateways: number;
 }
 export interface SharedPoolScalingMember {
     gatewayId: string;
@@ -29,7 +29,6 @@ export interface SharedPoolReplacement {
 export declare function parseSharedPoolReplacements(value: unknown): SharedPoolReplacement[];
 export interface SharedPoolScalingInput {
     config: SharedGatewayAutoscalingConfig;
-    bounds: SharedPoolReplicaBounds;
     members: readonly SharedPoolScalingMember[];
     userDemandCount: number;
     now: number;
@@ -114,10 +113,6 @@ export declare function sharedPoolMemberIds(roots: readonly SharedPoolMemberRoot
 export declare function deriveSharedGatewayPoolConfig(roots: readonly SharedPoolMemberRoot[], sharedGatewayAutoscaling?: SharedGatewayAutoscalingConfig): SharedGatewayPoolConfig | null;
 export declare function parseSharedGatewayPoolConfig(value: unknown): SharedGatewayPoolConfig | null;
 export declare function parseSharedGatewayAutoscalingConfig(value: unknown): SharedGatewayAutoscalingConfig | null;
-export declare function parseSharedPoolReplicaBounds(value: {
-    minReplicas: unknown;
-    maxReplicas: unknown;
-}): SharedPoolReplicaBounds | null;
 export declare function authoritativeSharedGatewayLoad(candidate: SharedGatewayPoolCandidate): number;
 export declare function isAcceptingSharedGateway(config: SharedGatewayPoolConfig, candidate: SharedGatewayPoolCandidate): boolean;
 export declare function isSettledSharedGateway(config: SharedGatewayPoolConfig, candidate: SharedGatewayPoolCandidate): boolean;

@@ -10,7 +10,6 @@ import {
   isSharedPoolSlotId,
   parseSharedGatewayAutoscalingConfig,
   parseSharedGatewayPoolConfig,
-  parseSharedPoolReplicaBounds,
   planSharedGatewayRebalance,
   selectSharedGateway,
 } from "./shared-gateway-pool.js";
@@ -92,11 +91,11 @@ describe("deriveSharedGatewayPoolConfig", () => {
     expect(deriveSharedGatewayPoolConfig([root("walter", { gatewayClass: "isolated" })])).toBeNull();
     expect(deriveSharedGatewayPoolConfig(
       [root("shared-0")],
-      { enabled: false, buildersPerGateway: 3 },
+      { enabled: false, buildersPerGateway: 3, minGateways: 0, maxGateways: 4 },
     )).toEqual({
       defaultGatewayId: "shared-0",
       sharedGatewayIds: ["shared-0"],
-      sharedGatewayAutoscaling: { enabled: false, buildersPerGateway: 3 },
+      sharedGatewayAutoscaling: { enabled: false, buildersPerGateway: 3, minGateways: 0, maxGateways: 4 },
     });
   });
 });
@@ -125,37 +124,51 @@ describe("scaling configuration", () => {
     expect(parseSharedGatewayAutoscalingConfig(undefined)).toEqual({
       enabled: true,
       buildersPerGateway: 10,
+      minGateways: 1,
+      maxGateways: 32,
     });
-    expect(parseSharedGatewayAutoscalingConfig({ enabled: false, buildersPerGateway: 2 })).toEqual({
+    expect(parseSharedGatewayAutoscalingConfig({ enabled: false, buildersPerGateway: 2, minGateways: 0, maxGateways: 8 })).toEqual({
       enabled: false,
       buildersPerGateway: 2,
+      minGateways: 0,
+      maxGateways: 8,
     });
     expect(parseSharedGatewayAutoscalingConfig({ buildersPerGateway: 1 })).toBeNull();
     expect(parseSharedGatewayAutoscalingConfig({ enabled: "yes" })).toBeNull();
     expect(parseSharedGatewayAutoscalingConfig({ minHotMembers: 2 })).toEqual({
       enabled: true,
       buildersPerGateway: 10,
+      minGateways: 1,
+      maxGateways: 32,
     });
   });
 
-  it("parses the environment replica bounds", () => {
-    expect(parseSharedPoolReplicaBounds({ minReplicas: "0", maxReplicas: "8" })).toEqual({
-      minReplicas: 0,
-      maxReplicas: 8,
+  it("reads a config stored before the gateway bounds with the default floor and ceiling", () => {
+    expect(parseSharedGatewayAutoscalingConfig({ enabled: false, buildersPerGateway: 4 })).toEqual({
+      enabled: false,
+      buildersPerGateway: 4,
+      minGateways: 1,
+      maxGateways: 32,
     });
-    expect(parseSharedPoolReplicaBounds({ minReplicas: 2, maxReplicas: 2 })).toEqual({
-      minReplicas: 2,
-      maxReplicas: 2,
+  });
+
+  it("accepts a floor equal to the ceiling", () => {
+    expect(parseSharedGatewayAutoscalingConfig({ minGateways: 2, maxGateways: 2 })).toMatchObject({
+      minGateways: 2,
+      maxGateways: 2,
     });
-    for (const bounds of [
-      { minReplicas: "3", maxReplicas: "2" },
-      { minReplicas: "-1", maxReplicas: "2" },
-      { minReplicas: "0", maxReplicas: "0" },
-      { minReplicas: "1.5", maxReplicas: "2" },
-      { minReplicas: undefined, maxReplicas: "2" },
-    ]) {
-      expect(parseSharedPoolReplicaBounds(bounds)).toBeNull();
-    }
+  });
+
+  it.each([
+    { minGateways: 3, maxGateways: 2 },
+    { minGateways: -1, maxGateways: 2 },
+    { minGateways: 0, maxGateways: 0 },
+    { minGateways: 1.5, maxGateways: 2 },
+    { minGateways: "1", maxGateways: 2 },
+    { minGateways: 1, maxGateways: Number.POSITIVE_INFINITY },
+    { minGateways: 40 },
+  ])("refuses gateway bounds %j", (bounds) => {
+    expect(parseSharedGatewayAutoscalingConfig(bounds)).toBeNull();
   });
 });
 

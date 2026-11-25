@@ -1415,6 +1415,18 @@ ALTER TABLE users ADD COLUMN workspace_checkpoint jsonb
   CHECK (workspace_checkpoint IS NULL OR jsonb_typeof(workspace_checkpoint) = 'object');
 `;
 
+const SHARED_POOL_GATEWAY_BOUNDS = `
+ALTER TABLE orchestrator_config
+  ADD COLUMN shared_min_gateways integer CHECK (shared_min_gateways >= 0),
+  ADD COLUMN shared_max_gateways integer CHECK (shared_max_gateways >= 1);
+UPDATE orchestrator_config SET shared_min_gateways = 1, shared_max_gateways = 32
+  WHERE shared_autoscaling_enabled IS NOT NULL;
+ALTER TABLE orchestrator_config ADD CONSTRAINT orchestrator_config_shared_gateway_bounds_check CHECK (
+  (shared_autoscaling_enabled IS NULL) = (shared_min_gateways IS NULL) AND
+  (shared_autoscaling_enabled IS NULL) = (shared_max_gateways IS NULL) AND
+  shared_min_gateways <= shared_max_gateways);
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1442,4 +1454,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 24, name: "ephemeral-gateway-home", sql: EPHEMERAL_GATEWAY_HOME },
   { version: 25, name: "native-scheduler-export", sql: NATIVE_SCHEDULER_EXPORT },
   { version: 26, name: "ephemeral-gateway-recovery-state", sql: EPHEMERAL_GATEWAY_RECOVERY_STATE },
+  { version: 27, name: "shared-pool-gateway-bounds", sql: SHARED_POOL_GATEWAY_BOUNDS },
 ];

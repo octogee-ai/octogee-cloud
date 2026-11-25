@@ -3,6 +3,8 @@ export const SHARED_POOL_SLOT_ID_PATTERN = /^shared-[a-z0-9]+$/;
 export const SHARED_POOL_SLOT_ID_REQUIREMENT = 'a shared gatewayId must be "shared-" followed by lowercase letters or digits';
 export const DEFAULT_SHARED_GATEWAY_AUTOSCALING_ENABLED = true;
 export const DEFAULT_SHARED_GATEWAY_USERS_PER_GATEWAY = 10;
+export const DEFAULT_SHARED_GATEWAY_MIN_GATEWAYS = 1;
+export const DEFAULT_SHARED_GATEWAY_MAX_GATEWAYS = 32;
 const SHARED_POOL_MEMBER_STATUSES = new Set(["running", "draining", "paused"]);
 export const SHARED_POOL_REPLACEMENT_STALL_MS = 30 * 60_000;
 function isSharedPoolReplacement(value) {
@@ -95,28 +97,26 @@ export function parseSharedGatewayPoolConfig(value) {
 function isValidUsersPerGateway(value) {
     return typeof value === "number" && Number.isInteger(value) && value >= 2;
 }
+function isGatewayCount(value) {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
 export function parseSharedGatewayAutoscalingConfig(value) {
     if (value !== undefined && !isRecord(value))
         return null;
     const config = value ?? {};
     const enabled = config.enabled ?? DEFAULT_SHARED_GATEWAY_AUTOSCALING_ENABLED;
     const buildersPerGateway = config.buildersPerGateway ?? DEFAULT_SHARED_GATEWAY_USERS_PER_GATEWAY;
-    if (typeof enabled !== "boolean" || !isValidUsersPerGateway(buildersPerGateway)) {
+    const minGateways = config.minGateways ?? DEFAULT_SHARED_GATEWAY_MIN_GATEWAYS;
+    const maxGateways = config.maxGateways ?? DEFAULT_SHARED_GATEWAY_MAX_GATEWAYS;
+    if (typeof enabled !== "boolean" ||
+        !isValidUsersPerGateway(buildersPerGateway) ||
+        !isGatewayCount(minGateways) ||
+        !isGatewayCount(maxGateways) ||
+        maxGateways < 1 ||
+        minGateways > maxGateways) {
         return null;
     }
-    return { enabled, buildersPerGateway };
-}
-function parseReplicaCount(value) {
-    const parsed = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
-    return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-export function parseSharedPoolReplicaBounds(value) {
-    const minReplicas = parseReplicaCount(value.minReplicas);
-    const maxReplicas = parseReplicaCount(value.maxReplicas);
-    if (minReplicas === null || maxReplicas === null || maxReplicas < 1 || minReplicas > maxReplicas) {
-        return null;
-    }
-    return { minReplicas, maxReplicas };
+    return { enabled, buildersPerGateway, minGateways, maxGateways };
 }
 export function authoritativeSharedGatewayLoad(candidate) {
     return candidate.assignmentCount + candidate.incomingMigrationCount;

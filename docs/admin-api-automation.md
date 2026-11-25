@@ -35,7 +35,11 @@ One consistent read of the fleet:
   "generatedAt": 1794268800000,
   "fleetControllerStartedAt": 1794268000000,
   "platformArtifactHash": "<hash of the platform gateway build>",
-  "config": { "sharedGatewayAutoscaling": {}, "sizingProfiles": {}, "disposableGatewayIdleMs": null },
+  "config": {
+    "sharedGatewayAutoscaling": { "enabled": true, "buildersPerGateway": 10, "minGateways": 1, "maxGateways": 32 },
+    "sizingProfiles": {},
+    "disposableGatewayIdleMs": null
+  },
   "sharedPoolAutomation": { "actionSequence": 4, "lastActionAt": 1794268800000, "replacements": [] },
   "users": [],
   "gateways": [],
@@ -48,6 +52,9 @@ One consistent read of the fleet:
 ```
 
 `config.sharedGatewayAutoscaling` is `null` when the stored dial is malformed.
+Its `minGateways` and `maxGateways` are the shared pool's floor and ceiling for
+the automation that sizes the pool; the platform stores them and enforces no
+pool size.
 `operations` holds the operations in the statuses named by
 `?operationStatus=` (default `pending,running`). `latestReleasePayloadHashes`
 covers shared gateways only and is `null` for one whose latest release has no

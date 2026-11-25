@@ -280,6 +280,25 @@ describe.skipIf(!dsn)("migratePlatformState", () => {
     expect(config.rows[0].sizing_profiles).toEqual({ pod: { ...pod, sizingTier: "s" }, shared, pro });
   });
 
+  it("gives stored shared pool autoscaling a floor of 1 and a ceiling of 32 gateways", async () => {
+    const { pool, schema } = isolated();
+    const table = pg.escapeIdentifier(schema);
+    await migratePlatformState(pool, { schema, through: 26 });
+    await pool.query(
+      `INSERT INTO ${table}.orchestrator_config (id, shared_autoscaling_enabled, shared_users_per_gateway) VALUES ('orchestrator', false, 4)`,
+    );
+
+    await migratePlatformState(pool, { schema });
+
+    const store = createPostgresPlatformStateStore({ pool, schema });
+    expect((await store.config.orchestrator.get())?.sharedGatewayAutoscaling).toEqual({
+      enabled: false,
+      buildersPerGateway: 4,
+      minGateways: 1,
+      maxGateways: 32,
+    });
+  });
+
   it("refuses to fold an xs sizing profile into s beside a profile on the same runtime with other computer settings", async () => {
     const { pool, schema } = isolated();
     const table = pg.escapeIdentifier(schema);
