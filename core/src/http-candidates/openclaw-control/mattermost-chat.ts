@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   parseChannelScopedMattermostSessionRoute,
   parseMattermostSessionRoute,
@@ -48,6 +50,24 @@ const ANSWER_DELIVERY_OUTCOMES = new Set([
   "not-attempted",
 ]);
 const CONTROL_IDEMPOTENCY_KEY = /^[^\p{Cc}]{1,256}$/u;
+const EDGE_HISTORY_CURSOR_FAMILY = "mattermost-history:";
+const EDGE_HISTORY_CURSOR_PREFIX = `${EDGE_HISTORY_CURSOR_FAMILY}v1:`;
+const MAX_EDGE_HISTORY_CURSOR_CHARS = 2_048;
+const EDGE_HISTORY_CURSOR_BODY = /^[A-Za-z0-9_-]+$/u;
+const EDGE_HISTORY_CURSOR_FIELDS = new Set(["v", "k", "t", "i", "a", "s"]);
+const CHANNEL_SOURCE_TURN_KEY = /^channel-user:v1:[0-9a-f]{64}$/u;
+const NATIVE_SESSION_ID = /^[^\p{Cc}]{1,1024}$/u;
+const UNSUPPORTED_HISTORY_REQUEST = "Unsupported Mattermost channel history request";
+const DEFAULT_HISTORY_LIMIT = 800;
+const MAX_HISTORY_LIMIT = 1_000;
+const CONTROL_CHAT_METHODS = new Set([
+  "sessions.subscribe",
+  "sessions.messages.subscribe",
+  "sessions.list",
+  "chat.history",
+  "chat.startup",
+  "chat.send",
+]);
 const SESSION_LIST_PARAM_KEYS = new Set([
   "activeMinutes",
   "agentId",
@@ -133,6 +153,18 @@ interface ProjectedMessage {
     senderProfileAvatarUrl?: string;
     turnBoundary?: true;
   };
+}
+
+interface EdgeHistoryCursor {
+  sessionKey: string;
+  before: number;
+  postId?: string;
+  seamKey?: string;
+  sessionId?: string;
+}
+
+class MattermostHistoryCursorError extends Error {
+  override name = "MattermostHistoryCursorError";
 }
 
 interface ProjectedHistory {
@@ -1349,17 +1381,19 @@ async function readProjectedHistory(
   route: NonNullable<ReturnType<typeof parseChannelScopedMattermostSessionRoute>>,
   requiredMessages: number,
   signal?: AbortSignal,
+  select: (messages: ProjectedMessage[]) => readonly ProjectedMessage[] = (messages) => messages,
 ): Promise<{ messages: ProjectedMessage[]; reachedEnd: boolean }> {
   let before: string | undefined;
   let reachedEnd = false;
   const posts: MattermostModelPost[] = [];
   const cursors = new Set<string>();
   let messages: ProjectedMessage[] = [];
+  let selected: readonly ProjectedMessage[] = [];
   let unresolvedPostIds: string[] = [];
   let historyBytes = 0;
   let projectionPostVisits = 0;
   let nextProjectionPostCount = HISTORY_PAGE_SIZE;
-  while (!reachedEnd && historyNeedsMore(messages, requiredMessages, unresolvedPostIds)) {
+  while (!reachedEnd && historyNeedsMore(selected, requiredMessages, unresolvedPostIds)) {
     signal?.throwIfAborted();
     const page = await authorization.client.listChannelPosts(
       route.primaryChannelId,
@@ -1381,6 +1415,7 @@ async function readProjectedHistory(
         agentId: route.agentId,
         agentMmUserId: authorization.target.agentMmUserId,
       });
+      selected = select(messages);
       unresolvedPostIds = unresolvedDeliveredCommitPostIds({
         posts,
         channelId: route.primaryChannelId,
@@ -1392,7 +1427,7 @@ async function readProjectedHistory(
         Math.max(posts.length + HISTORY_PAGE_SIZE, posts.length * 2),
       );
     }
-    if (reachedEnd || messages.length >= requiredMessages && unresolvedPostIds.length === 0) break;
+    if (reachedEnd || selected.length >= requiredMessages && unresolvedPostIds.length === 0) break;
     before = nextHistoryCursor(page.nextBefore, cursors);
   }
   if (unresolvedPostIds.length > 0) {
@@ -1484,7 +1519,7 @@ async function prepareSessionsList(
 }
 
 async function attributeChatProfiles(
-  page: ProjectedHistory,
+  page: { messages: readonly ProjectedMessage[] },
   session: OpenClawControlSession,
   { channelId, agentId }: { channelId: string; agentId: string },
   resolve: OpenClawControlProxyIdentity["resolveChatProfile"] | undefined,
@@ -1544,18 +1579,18 @@ async function prepareHistory(
   const nativeRoute = isNativeMattermostSessionKey(sessionKey);
   if (!params) {
     return looksMattermostScopedSessionKey(sessionKey) && !nativeRoute
-      ? rpcError(frame, "INVALID_REQUEST", "Unsupported Mattermost channel history request")
+      ? rpcError(frame, "INVALID_REQUEST", UNSUPPORTED_HISTORY_REQUEST)
       : null;
   }
   if (!channelRoute) {
     return nativeRoute || !looksMattermostScopedSessionKey(sessionKey)
       ? null
-      : rpcError(frame, "INVALID_REQUEST", "Unsupported Mattermost channel history request");
+      : rpcError(frame, "INVALID_REQUEST", UNSUPPORTED_HISTORY_REQUEST);
   }
   onStage("authorization");
   const access = await authorized(authorize, session, params.sessionKey, signal);
   if (!access) {
-    return rpcError(frame, "INVALID_REQUEST", "Unsupported Mattermost channel history request");
+    return rpcError(frame, "INVALID_REQUEST", UNSUPPORTED_HISTORY_REQUEST);
   }
   if (frame.params.agentId !== undefined && frame.params.agentId !== access.route.agentId) {
     return rpcError(frame, "INVALID_REQUEST", "Mattermost channel Agent does not match the session");
@@ -1581,6 +1616,259 @@ async function prepareHistory(
     kind: "upstream",
     project: (upstream) => projectUpstreamHistory(upstream, page),
   };
+}
+
+function encodeEdgeHistoryCursor(cursor: EdgeHistoryCursor): string | undefined {
+  const body = Buffer.from(JSON.stringify({
+    v: 1,
+    k: cursor.sessionKey,
+    t: cursor.before,
+    ...(cursor.postId === undefined ? {} : { i: cursor.postId }),
+    ...(cursor.seamKey === undefined ? {} : { a: cursor.seamKey }),
+    ...(cursor.sessionId === undefined ? {} : { s: cursor.sessionId }),
+  }), "utf8").toString("base64url");
+  const encoded = EDGE_HISTORY_CURSOR_PREFIX + body;
+  return encoded.length <= MAX_EDGE_HISTORY_CURSOR_CHARS ? encoded : undefined;
+}
+
+function isEdgeHistoryCursor(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith(EDGE_HISTORY_CURSOR_FAMILY);
+}
+
+function parsedEdgeHistoryCursorBody(value: string): Record<string, unknown> | null {
+  const body = value.slice(EDGE_HISTORY_CURSOR_PREFIX.length);
+  if (
+    !value.startsWith(EDGE_HISTORY_CURSOR_PREFIX) ||
+    value.length > MAX_EDGE_HISTORY_CURSOR_CHARS ||
+    !EDGE_HISTORY_CURSOR_BODY.test(body)
+  ) return null;
+  const bytes = Buffer.from(body, "base64url");
+  if (bytes.toString("base64url") !== body) return null;
+  try {
+    return record(JSON.parse(bytes.toString("utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function validEdgeHistoryCursorFields(cursor: Record<string, unknown>, sessionKey: string): boolean {
+  return [
+    Object.keys(cursor).every((key) => EDGE_HISTORY_CURSOR_FIELDS.has(key)),
+    cursor.v === 1,
+    cursor.k === sessionKey,
+    safeInteger(cursor.t, 0, Number.MAX_SAFE_INTEGER),
+    cursor.i === undefined || isMattermostId(cursor.i),
+    cursor.a === undefined || typeof cursor.a === "string" && CHANNEL_SOURCE_TURN_KEY.test(cursor.a),
+    cursor.s === undefined || typeof cursor.s === "string" && NATIVE_SESSION_ID.test(cursor.s),
+  ].every(Boolean);
+}
+
+function decodeEdgeHistoryCursor(value: string, sessionKey: string): EdgeHistoryCursor {
+  const cursor = parsedEdgeHistoryCursorBody(value);
+  if (!cursor || !validEdgeHistoryCursorFields(cursor, sessionKey)) {
+    throw new MattermostHistoryCursorError("Mattermost channel history cursor was invalid");
+  }
+  return {
+    sessionKey,
+    before: cursor.t as number,
+    ...(typeof cursor.i === "string" ? { postId: cursor.i } : {}),
+    ...(typeof cursor.a === "string" ? { seamKey: cursor.a } : {}),
+    ...(typeof cursor.s === "string" ? { sessionId: cursor.s } : {}),
+  };
+}
+
+function nativeMessageTimestamp(message: Record<string, unknown> | null): number | null {
+  const timestamp = message?.timestamp;
+  return typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp >= 0
+    ? Math.floor(timestamp)
+    : null;
+}
+
+function nativeTranscriptStart(messages: readonly unknown[]): Pick<EdgeHistoryCursor, "before" | "seamKey"> | null {
+  if (messages.length === 0) return { before: Date.now() };
+  const records = messages.map(record);
+  const timestamps = records.map(nativeMessageTimestamp).filter((value): value is number => value !== null);
+  if (timestamps.length === 0) return null;
+  const seamKey = record(records.find((message) => message?.role === "user")?.__openclaw)?.idempotencyKey;
+  return {
+    before: Math.min(...timestamps),
+    ...(typeof seamKey === "string" && CHANNEL_SOURCE_TURN_KEY.test(seamKey) ? { seamKey } : {}),
+  };
+}
+
+function nativeHistorySessionId(payload: Record<string, unknown>): string | undefined {
+  const candidate = record(payload.sessionInfo)?.sessionId ?? payload.sessionId;
+  const sessionId = typeof candidate === "string" ? candidate.trim() : "";
+  return NATIVE_SESSION_ID.test(sessionId) ? sessionId : undefined;
+}
+
+function withEdgeOlderCursor(
+  payload: Record<string, unknown>,
+  sessionKey: string,
+): Record<string, unknown> | null {
+  if (
+    payload.kind !== undefined ||
+    !Array.isArray(payload.messages) ||
+    payload.hasMore === true ||
+    nonBlank(payload.olderCursor)
+  ) return null;
+  const start = nativeTranscriptStart(payload.messages);
+  if (!start) return null;
+  const sessionId = nativeHistorySessionId(payload);
+  const olderCursor = encodeEdgeHistoryCursor({
+    sessionKey,
+    ...start,
+    ...(sessionId === undefined ? {} : { sessionId }),
+  });
+  if (!olderCursor) return null;
+  const projected: Record<string, unknown> = { ...payload, hasMore: true, olderCursor };
+  delete projected.completeSnapshot;
+  return projected;
+}
+
+function projectNativeHistory(frame: Record<string, unknown>, sessionKey: string): Record<string, unknown> {
+  if (frame.type !== "res" || frame.ok !== true) return frame;
+  const payload = record(frame.payload);
+  const projected = payload ? withEdgeOlderCursor(payload, sessionKey) : null;
+  return projected ? { ...frame, payload: projected } : frame;
+}
+
+function projectNativeSubscription(frame: Record<string, unknown>, sessionKey: string): Record<string, unknown> {
+  if (frame.type !== "res" || frame.ok !== true) return frame;
+  const payload = record(frame.payload);
+  const initialHistory = record(payload?.initialHistory);
+  const history = initialHistory?.ok === true ? record(initialHistory.payload) : null;
+  const projected = history ? withEdgeOlderCursor(history, sessionKey) : null;
+  if (!payload || !initialHistory || !projected) return frame;
+  return { ...frame, payload: { ...payload, initialHistory: { ...initialHistory, payload: projected } } };
+}
+
+function prepareNativeSubscription(frame: OpenClawControlRequestFrame): MattermostChatPreparation | null {
+  const key = frame.params.key;
+  if (
+    !nonBlank(key) ||
+    !parseChannelScopedMattermostSessionRoute(key) ||
+    record(frame.params.initialHistory) === null
+  ) return null;
+  return { kind: "upstream", project: (upstream) => projectNativeSubscription(upstream, key) };
+}
+
+function mattermostChannelSourceTurnKey(accountId: string, channelId: string, postId: string): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify(["mattermost", accountId.trim().toLowerCase(), `channel:${channelId}`, postId]))
+    .digest("hex");
+  return `channel-user:v1:${digest}`;
+}
+
+function olderThanEdgeCursor(
+  cursor: EdgeHistoryCursor,
+  route: { primaryChannelId: string; agentId: string },
+): (messages: readonly ProjectedMessage[]) => ProjectedMessage[] {
+  const accountId = cursor.seamKey === undefined ? null : mattermostAccountIdForAgentId(route.agentId);
+  const isSeam = (message: ProjectedMessage) => accountId !== null && message.role === "user" &&
+    mattermostChannelSourceTurnKey(accountId, route.primaryChannelId, message.__openclaw.id) === cursor.seamKey;
+  return (messages) => {
+    const cutIndex = cursor.postId === undefined
+      ? -1
+      : messages.findIndex((message) => message.__openclaw.id === cursor.postId);
+    const older = cutIndex >= 0
+      ? messages.slice(0, cutIndex)
+      : messages.filter((message) => message.timestamp < cursor.before);
+    return older.filter((message) => !isSeam(message));
+  };
+}
+
+function olderHistoryParams(params: Record<string, unknown>): { limit: number; maxBytes?: number } | null {
+  if (params.offset !== undefined || params.messageId !== undefined || params.sessionId !== undefined) return null;
+  const limit = params.limit === undefined ? DEFAULT_HISTORY_LIMIT : params.limit;
+  if (!safeInteger(limit, 1, MAX_HISTORY_LIMIT)) return null;
+  if (params.maxBytes !== undefined && !safeInteger(params.maxBytes, 1, Number.MAX_SAFE_INTEGER)) return null;
+  return { limit, ...(typeof params.maxBytes === "number" ? { maxBytes: params.maxBytes } : {}) };
+}
+
+function withinByteBudget(messages: ProjectedMessage[], maxBytes: number | undefined): ProjectedMessage[] {
+  if (maxBytes === undefined) return messages;
+  const sizes = messages.map((message) => Buffer.byteLength(JSON.stringify(message), "utf8") + 1);
+  let total = sizes.reduce((sum, size) => sum + size, 1);
+  let start = 0;
+  while (start < messages.length - 1 && total > maxBytes) {
+    total -= sizes[start]!;
+    start += 1;
+  }
+  return messages.slice(start);
+}
+
+async function prepareMattermostOlderHistory(
+  frame: OpenClawControlRequestFrame,
+  session: OpenClawControlSession,
+  authorize: Authorize,
+  resolveChatProfile: OpenClawControlProxyIdentity["resolveChatProfile"] | undefined,
+  { signal, onStage }: { signal?: AbortSignal; onStage: (stage: string) => void },
+): Promise<MattermostChatPreparation> {
+  const sessionKey = frame.params.sessionKey as string;
+  onStage("cursor");
+  const cursor = decodeEdgeHistoryCursor(frame.params.cursor as string, sessionKey);
+  const params = olderHistoryParams(frame.params);
+  if (!params) return rpcError(frame, "INVALID_REQUEST", UNSUPPORTED_HISTORY_REQUEST);
+  onStage("authorization");
+  const access = await authorized(authorize, session, sessionKey, signal);
+  if (!access) return rpcError(frame, "INVALID_REQUEST", UNSUPPORTED_HISTORY_REQUEST);
+  if (frame.params.agentId !== undefined && frame.params.agentId !== access.route.agentId) {
+    return rpcError(frame, "INVALID_REQUEST", "Mattermost channel Agent does not match the session");
+  }
+  onStage("history");
+  const select = olderThanEdgeCursor(cursor, access.route);
+  const history = await readProjectedHistory(
+    access.authorization,
+    access.route,
+    Math.min(MAX_HISTORY_POSTS, params.limit + 1),
+    signal,
+    select,
+  );
+  const older = select(history.messages);
+  if (older.length === 0 && !history.reachedEnd) {
+    return rpcError(frame, "UNAVAILABLE", "Mattermost channel history exceeds the recovery window");
+  }
+  const limited = older.slice(Math.max(0, older.length - params.limit));
+  onStage("profiles");
+  await attributeChatProfiles({ messages: limited }, session, {
+    channelId: access.route.primaryChannelId,
+    agentId: access.authorization.target.agentId,
+  }, resolveChatProfile, signal);
+  const messages = withinByteBudget(limited, params.maxBytes);
+  const hasMore = older.length > messages.length;
+  const oldest = messages[0];
+  const olderCursor = hasMore && oldest ? encodeEdgeHistoryCursor({
+    sessionKey,
+    before: oldest.timestamp,
+    postId: oldest.__openclaw.id,
+    ...(cursor.sessionId === undefined ? {} : { sessionId: cursor.sessionId }),
+  }) : undefined;
+  if (hasMore && !olderCursor) {
+    throw new ChannelSessionMattermostError("Mattermost channel history could not be paged safely");
+  }
+  return rpcSuccess(frame, {
+    sessionKey,
+    ...(cursor.sessionId === undefined ? {} : { sessionId: cursor.sessionId }),
+    messages,
+    hasMore,
+    ...(olderCursor === undefined ? {} : { olderCursor }),
+  });
+}
+
+async function prepareNativeChannelHistory(
+  frame: OpenClawControlRequestFrame,
+  session: OpenClawControlSession,
+  authorize: Authorize,
+  resolveChatProfile: OpenClawControlProxyIdentity["resolveChatProfile"] | undefined,
+  options: { signal?: AbortSignal; onStage: (stage: string) => void },
+): Promise<MattermostChatPreparation | undefined> {
+  const sessionKey = frame.params.sessionKey;
+  if (!nonBlank(sessionKey) || !parseChannelScopedMattermostSessionRoute(sessionKey)) return undefined;
+  if (frame.method === "chat.history" && isEdgeHistoryCursor(frame.params.cursor)) {
+    return await prepareMattermostOlderHistory(frame, session, authorize, resolveChatProfile, options);
+  }
+  return { kind: "upstream", project: (upstream) => projectNativeHistory(upstream, sessionKey) };
 }
 
 function validSendMessage(value: unknown): value is string {
@@ -1688,6 +1976,9 @@ function unavailableResponse(
   frame: OpenClawControlRequestFrame,
   error: unknown,
 ): MattermostChatPreparation {
+  if (error instanceof MattermostHistoryCursorError) {
+    return rpcError(frame, "INVALID_REQUEST", "Invalid Mattermost channel history cursor");
+  }
   const denied = error instanceof ChannelSessionMattermostError && error.status === 403;
   return rpcError(
     frame,
@@ -1717,6 +2008,37 @@ function watchPreparedHistory(
   }
 }
 
+function prepareSubscription(
+  frame: OpenClawControlRequestFrame,
+  perUserIdentity: boolean,
+): MattermostChatPreparation | null {
+  if (frame.method === "sessions.messages.subscribe") {
+    return perUserIdentity ? prepareNativeSubscription(frame) : null;
+  }
+  return perUserIdentity ? null : prepareSessionSubscription(frame);
+}
+
+async function prepareChannelHistory(
+  frame: OpenClawControlRequestFrame,
+  session: OpenClawControlSession,
+  authorize: Authorize,
+  broker: ReturnType<typeof createBrokeredMattermostAccess>,
+  { perUserIdentity, resolveChatProfile, ...stages }: {
+    perUserIdentity?: boolean;
+    resolveChatProfile?: OpenClawControlProxyIdentity["resolveChatProfile"];
+    signal?: AbortSignal;
+    onStage: (stage: string) => void;
+  },
+): Promise<MattermostChatPreparation | null> {
+  if (perUserIdentity) {
+    const native = await prepareNativeChannelHistory(frame, session, authorize, resolveChatProfile, stages);
+    if (native !== undefined) return native;
+  }
+  const history = await prepareHistory(frame, session, authorize, resolveChatProfile, stages);
+  watchPreparedHistory(history, frame, broker);
+  return history;
+}
+
 export function createMattermostControlChat(options: {
   perUserIdentity?: boolean;
   allowAttachments?: boolean;
@@ -1729,11 +2051,11 @@ export function createMattermostControlChat(options: {
       const broker = createBrokeredMattermostAccess(session);
       const authorize = options.authorize ?? broker.authorize;
       const listWorkspaceChannels = options.listWorkspaceChannels ?? broker.listWorkspaceChannels;
-      if (!["sessions.subscribe", "sessions.list", "chat.history", "chat.startup", "chat.send"].includes(frame.method)) return null;
+      if (!CONTROL_CHAT_METHODS.has(frame.method)) return null;
       const startedAt = performance.now();
       let stage = initialRequestStage(frame.method);
       try {
-        if (frame.method === "sessions.subscribe") return options.perUserIdentity ? null : prepareSessionSubscription(frame);
+        if (frame.method.endsWith(".subscribe")) return prepareSubscription(frame, options.perUserIdentity === true);
         if (frame.method === "sessions.list") {
           return await prepareSessionsList(
             frame,
@@ -1744,11 +2066,12 @@ export function createMattermostControlChat(options: {
           );
         }
         if (frame.method === "chat.send") return await prepareSend(frame, session, authorize, options.allowAttachments === true, signal);
-        const history = await prepareHistory(frame, session, authorize, options.resolveChatProfile, {
-          signal, onStage: (next) => { stage = next; },
+        return await prepareChannelHistory(frame, session, authorize, broker, {
+          perUserIdentity: options.perUserIdentity,
+          resolveChatProfile: options.resolveChatProfile,
+          signal,
+          onStage: (next) => { stage = next; },
         });
-        watchPreparedHistory(history, frame, broker);
-        return history;
       } catch (error) {
         if (signal?.aborted) throw signal.reason;
         logger.warn("Mattermost Dashboard request failed", {
