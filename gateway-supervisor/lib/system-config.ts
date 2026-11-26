@@ -1,4 +1,4 @@
-import { applyAgentStoreDatabasePatch } from "../entrypoints/pre-boot-config.js";
+import { applyPreBootPatches } from "../entrypoints/pre-boot-config.js";
 import { localStateStoreKind, localStateStorePath } from "./openclaw-state-store.js";
 import { agentIdsFromConfig } from "@octogee/core/byosub-restore";
 import { runOpenClaw, type OpenClawCommand } from "./openclaw-cli.js";
@@ -2047,7 +2047,7 @@ export async function prepareIsolatedPrelaunchConfig(
   await disableSystemConfigWatch(openclawDir, slug, { runtimeProjection: true });
   clearMountedMarker(path.join(openclawDir, "customers"), slug);
   const config = readAcceptedUserConfig(openclawDir, env);
-  applyAgentStoreDatabasePatch(config, env, localStateStoreKind(localStateStorePath(openclawDir)));
+  applyPreBootPatches(config, env, defaultLog, { stateStore: localStateStoreKind(localStateStorePath(openclawDir)) });
   const acceptedAgentIds = agentIdsFromConfig(config);
   const { id: _id, ...agent } = buildSafeDefaultAgent({ ...env, OPENCLAW_DIR: openclawDir });
   const agents = asRecord(config.agents) ?? {};

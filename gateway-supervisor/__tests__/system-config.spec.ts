@@ -2205,4 +2205,36 @@ describe("Isolated prelaunch config", () => {
       expect(fs.readdirSync(root).filter(name => name.startsWith(".prelaunch-config-"))).toEqual([]);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
+
+  it.each(["omarchy", "x11"])("keeps the computer browser on a %s VM gateway whose accepted config predates it", async desktop => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-prelaunch-browser-"));
+    const repo = path.join(root, "system_config");
+    fs.mkdirSync(repo);
+    const env = withUserClaim({ OPENCLAW_DIR: root, GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "gce-vm",
+      GATEWAY_COMPUTER_DESKTOP: desktop, API_PUBLIC_URL: "https://api.example.test" }, "alice");
+    writeJson(path.join(repo, "openclaw.json"), {
+      agents: { entries: { "octogee-alice-coach": { workspace: path.join(root, "customers/alice") } } },
+      browser: { enabled: false },
+      plugins: { allow: ["mattermost", "anthropic"], entries: { browser: { enabled: false } } },
+      tools: { profile: "coding" },
+    });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["add", "openclaw.json"], { cwd: repo });
+    execFileSync("git", ["-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"], { cwd: repo });
+    type PrelaunchPatch = { browser: object; plugins: { allow: string[]; entries: Record<string, unknown> };
+      desktop: { host: object }; tools: { profile: string } };
+    let patch = {} as PrelaunchPatch;
+    const nativeWrite = vi.fn(async (args: string[]) => {
+      patch = JSON.parse(fs.readFileSync(args[args.indexOf("--file") + 1], "utf8")) as PrelaunchPatch;
+      return { code: 0, stdout: "" };
+    });
+    try {
+      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite);
+      expect(patch.browser).toMatchObject({ enabled: true, defaultProfile: "computer", attachOnly: true });
+      expect(patch.plugins.allow).toEqual(expect.arrayContaining(["browser", "cua-computer", "file-transfer"]));
+      expect(patch.plugins.entries.browser).toEqual({ enabled: true });
+      expect(patch.desktop.host).toMatchObject({ enabled: true, port: 5901 });
+      expect(patch.tools.profile).toBe("full");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
 });
