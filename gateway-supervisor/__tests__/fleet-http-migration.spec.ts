@@ -5879,6 +5879,50 @@ describe("createResumeHandler", () => {
     }
   });
 
+  it("reports the user provisioned once it resumes as the target of a cutover", async () => {
+    const order: string[] = [];
+    const adapter = mkAdapter({
+      resumeUser: vi.fn(async () => { order.push("resume"); }),
+      reportProvisioned: vi.fn(async () => { order.push("report"); }),
+    });
+    const deps = mkDeps({ adapter });
+    const body = { migrationId: SAMPLE_QUIESCE.migrationId, slug: "chris", role: "target" as const };
+    const response = mkResponse();
+    await createResumeHandler(deps)(
+      mkRequest(body, { signature: signForPod(body.migrationId, JSON.stringify(body)) }), response.res, vi.fn(),
+    );
+    expect(response.getStatus()).toBe(200);
+    expect(adapter.reportProvisioned).toHaveBeenCalledExactlyOnceWith({ uid: "uid-chris", slug: "chris" }, { first: false });
+    expect(order).toEqual(["resume", "report"]);
+  });
+
+  it("keeps a resumed target serving and logs when its provisioned report fails", async () => {
+    const adapter = mkAdapter({ reportProvisioned: vi.fn(async () => { throw new Error("broker unavailable"); }) });
+    const deps = mkDeps({ adapter });
+    const body = { migrationId: SAMPLE_QUIESCE.migrationId, slug: "chris", role: "target" as const };
+    const response = mkResponse();
+    await createResumeHandler(deps)(
+      mkRequest(body, { signature: signForPod(body.migrationId, JSON.stringify(body)) }), response.res, vi.fn(),
+    );
+    expect(response.getStatus()).toBe(200);
+    expect(deps.log).toHaveBeenCalledWith(
+      expect.stringContaining("provisioned report failed slug=chris: broker unavailable"),
+      { status: "failed" },
+    );
+  });
+
+  it("does not report a source that resumes after a rollback", async () => {
+    const adapter = mkAdapter();
+    const deps = mkDeps({ adapter });
+    const body = { migrationId: SAMPLE_QUIESCE.migrationId, slug: "chris" };
+    const response = mkResponse();
+    await createResumeHandler(deps)(
+      mkRequest(body, { signature: signForPod(body.migrationId, JSON.stringify(body)) }), response.res, vi.fn(),
+    );
+    expect(response.getStatus()).toBe(200);
+    expect(adapter.reportProvisioned).not.toHaveBeenCalled();
+  });
+
   it("does not resume channels without a valid signature", async () => {
     const adapter = mkAdapter();
     const deps = mkDeps({ adapter });
