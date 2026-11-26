@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,18 +17,20 @@ const wrongAlgorithm = generateKeyPairSync("ec", {
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
-const priceNames = [
-  "personal_monthly", "personal_pro_monthly",
-  "personal_pro_max_monthly", "builder_hobby_monthly",
-  "builder_pro_monthly", "builder_team_monthly",
-  "credit_10", "credit_25", "credit_50", "credit_100",
-];
+function platformScriptsWithoutExtensions(dir: string): string {
+  const root = path.join(dir, "platform");
+  mkdirSync(path.join(root, "scripts"), { recursive: true });
+  symlinkSync(path.join(repoRoot, "core"), path.join(root, "core"));
+  symlinkSync(path.join(repoRoot, "scripts/lib"), path.join(root, "scripts/lib"));
+  symlinkSync(path.join(repoRoot, "scripts/verify-secrets.sh"), path.join(root, "scripts/verify-secrets.sh"));
+  return root;
+}
 
 function verifySecrets(privateKey: string, publicKey: string) {
   const dir = mkdtempSync(path.join(tmpdir(), "octogee-signing-preflight-"));
   try {
     const fixture = path.join(dir, "keys.json");
-    writeFileSync(fixture, JSON.stringify({ privateKey, publicKey, priceNames }), { mode: 0o600 });
+    writeFileSync(fixture, JSON.stringify({ privateKey, publicKey }), { mode: 0o600 });
     writeFileSync(path.join(dir, "kubectl"), `#!/usr/bin/env node
 const { readFileSync } = require("node:fs");
 const args = process.argv.slice(2);
@@ -41,11 +43,7 @@ if (!key) process.exit(2);
 let value = "fixture-configured-value";
 if (["agent-control-router", "byot-sync-internal"].includes(args[2])) {
   value = key === "secret" ? fixture.privateKey : fixture.publicKey;
-} else if (args[2] === "stripe-secrets") {
-  value = { secret_key: "sk_test_fixture", webhook_secret: "whsec_fixture", price_ids:
-    JSON.stringify(Object.fromEntries(fixture.priceNames.map((name, index) => [name, "price_" + index]))) }[key];
-} else if (args[2] === "posthog-cloud") value = "";
-else if (args[2] === "mattermost-cloud-sql") value = "fixture-db-password";
+} else if (args[2] === "mattermost-cloud-sql") value = "fixture-db-password";
 process.stdout.write(Buffer.from(value).toString("base64"));
 `, { mode: 0o700 });
     writeFileSync(path.join(dir, "gcloud"), `#!/usr/bin/env bash
@@ -53,7 +51,7 @@ process.stdout.write(Buffer.from(value).toString("base64"));
 printf 'fixture-db-password'
 `, { mode: 0o700 });
     return spawnSync("bash", ["scripts/verify-secrets.sh", "--env=custom", "--namespace=signing-test"], {
-      cwd: repoRoot,
+      cwd: platformScriptsWithoutExtensions(dir),
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, OCTOGEE_SIGNING_FIXTURE: fixture },
       encoding: "utf8",
       timeout: 30_000,
@@ -68,6 +66,7 @@ describe("platform signing key deployment verification", () => {
     const result = verifySecrets(valid.privateKey, valid.publicKey);
     expect(result.error).toBeUndefined();
     expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("No secret extensions loaded");
     expect(result.stdout + result.stderr).not.toContain(valid.privateKey.trim());
     expect(result.stdout + result.stderr).not.toContain(valid.publicKey.trim());
   });
