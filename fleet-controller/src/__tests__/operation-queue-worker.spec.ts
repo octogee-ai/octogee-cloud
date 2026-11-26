@@ -440,6 +440,27 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
     expect(rolloutHandler).not.toHaveBeenCalled();
   });
 
+  it("never runs a parked return and keeps its lock even with a backoff written over it", async () => {
+    const migrateHandler: OperationHandler = vi.fn(async () => ({ steps: [], success: true }));
+    const { db, store } = createOperationsFixture({
+      "parked-return": baseOp({
+        id: "parked-return", kind: "migrate-user", createdAt: 1, queuedAt: 1, attempts: 3, firstStartedAt: 1,
+        nextAttemptAt: Date.now() + 60_000, waitingOn: "parked; an operator resumes it",
+        input: { fromGatewayId: "iso-a", toGatewayId: "shared-target" },
+        stallPark: { parkedAt: 2, reason: "repeated-failure", repeatedError: "status 503", lastError: "status 503",
+          attempts: 3, consecutiveFailures: 3, stuckSince: 1, queuedBehind: [], auditId: "audit-park" },
+      }),
+      "placement": baseOp({ id: "placement", kind: "migrate-user", createdAt: 2,
+        input: { fromGatewayId: "shared-other", toGatewayId: "shared-target" } }),
+    });
+
+    await drainPendingOperationsOnce(buildDeps(db, { "migrate-user": migrateHandler }));
+
+    expect(migrateHandler).not.toHaveBeenCalled();
+    expect(store.get("parked-return")).toMatchObject({ status: "pending", waitingOn: "parked; an operator resumes it" });
+    expect(store.get("placement")).toMatchObject({ status: "pending", waitingOn: expect.stringContaining("iso-a") });
+  });
+
   it("queues a migrate-customer op behind another one targeting the SAME gateway, but admits one to a DIFFERENT target immediately", async () => {
     const migrateHandler: OperationHandler = vi.fn(async () => ({ steps: [], success: true }));
     const { db, store } = createOperationsFixture({
