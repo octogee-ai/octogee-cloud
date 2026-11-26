@@ -10,8 +10,8 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-async function relayServer(token = "gateway-token") {
-  const relay = createOpenClawVoiceEventRelay({ gatewayToken: token });
+async function relayServer(token = "gateway-token", log = vi.fn()) {
+  const relay = createOpenClawVoiceEventRelay({ gatewayToken: token, log });
   const server = http.createServer((req, res) => {
     if (req.url === VOICE_EVENT_RELAY_PATH) {
       void relay.handle(req, res);
@@ -123,5 +123,45 @@ describe("OpenClaw voice event relay", () => {
 
     expect(delivered).toEqual([agent("run-1", "agent:mom-coach:mattermost:channel:group-1")]);
     expect(log).toHaveBeenCalledWith("voice relay subscriber failed", { agentId: "mom-coach", error: "session closed" });
+  });
+
+  it("tells the plugin whether a Talk session is listening to the agent", async () => {
+    const { relay, url } = await relayServer();
+    const event = agent("run-1", "agent:mom-coach:main");
+
+    const before = await publish(url, "gateway-token", "mom-coach", event);
+    expect(before.status).toBe(202);
+    expect(await before.json()).toEqual({ accepted: true, listening: false });
+
+    const stop = relay.source("mom-coach").subscribe(() => undefined);
+    const during = await publish(url, "gateway-token", "mom-coach", event);
+    expect(await during.json()).toEqual({ accepted: true, listening: true });
+    const otherAgent = await publish(url, "gateway-token", "dad-coach", event);
+    expect(await otherAgent.json()).toEqual({ accepted: true, listening: false });
+
+    stop();
+    const after = await fetch(url, {
+      method: "POST",
+      headers: { authorization: "Bearer gateway-token", "content-type": "application/json" },
+      body: JSON.stringify({ schemaVersion: 1, agentId: "mom-coach", kind: "ready", ts: 2 }),
+    });
+    expect(await after.json()).toEqual({ accepted: true, listening: false });
+  });
+
+  it("logs an event it refuses as too large", async () => {
+    const log = vi.fn();
+    const { url } = await relayServer("gateway-token", log);
+
+    const response = await publish(url, "gateway-token", "mom-coach", {
+      kind: "agent",
+      runId: "run-1",
+      stream: "tool",
+      ts: 1,
+      sessionKey: "agent:mom-coach:main",
+      data: { result: "x".repeat(70 * 1024) },
+    });
+
+    expect(response.status).toBe(413);
+    expect(log).toHaveBeenCalledWith("voice relay refused an event", { status: 413, error: "body_too_large" });
   });
 });

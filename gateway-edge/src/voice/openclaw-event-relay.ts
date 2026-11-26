@@ -161,6 +161,24 @@ export function createOpenClawVoiceEventRelay(params: {
     return { ready: lastSeen !== undefined && now() - lastSeen <= readyTtlMs };
   };
 
+  const refuse = (res: ServerResponse, status: number, error: string): void => {
+    log("voice relay refused an event", { status, error });
+    writeJson(res, status, { error });
+  };
+
+  const accept = (res: ServerResponse, body: unknown): void => {
+    const input = parseRelayEvent(body);
+    const ready = parseReady(body);
+    const agentId = input?.agentId ?? ready?.agentId;
+    if (!agentId) {
+      refuse(res, 422, "invalid_event");
+      return;
+    }
+    if (input) publish(input);
+    if (ready) lastSeenByAgent.set(ready.agentId, now());
+    writeJson(res, 202, { accepted: true, listening: (listenersByAgent.get(agentId)?.size ?? 0) > 0 });
+  };
+
   return {
     source,
     publish,
@@ -177,19 +195,10 @@ export function createOpenClawVoiceEventRelay(params: {
         return;
       }
       try {
-        const body = await readJson(req);
-        const input = parseRelayEvent(body);
-        const ready = parseReady(body);
-        if (!input && !ready) {
-          writeJson(res, 422, { error: "invalid_event" });
-          return;
-        }
-        if (input) publish(input);
-        if (ready) lastSeenByAgent.set(ready.agentId, now());
-        writeJson(res, 202, { accepted: true });
+        accept(res, await readJson(req));
       } catch (error) {
         const code = error instanceof Error ? error.message : "invalid_json";
-        writeJson(res, code === "body_too_large" ? 413 : 422, { error: code });
+        refuse(res, code === "body_too_large" ? 413 : 422, code);
       }
     },
   };
