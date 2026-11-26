@@ -31,7 +31,7 @@ function parkedReturnFleet(): Seed {
       waitingOn: PARKED_OPERATION_WAITING_ON,
       stallPark: {
         parkedAt: 100, reason: "repeated-failure", repeatedError: "status 503", lastError: "status 503",
-        attempts: 3, consecutiveFailures: 3, stuckSince: 10, queuedBehind: [], auditId: "audit-park",
+        attempts: 3, consecutiveFailures: 3, stuckSince: 10, stalledSince: 20, queuedBehind: [], auditId: "audit-park",
       },
     }),
   };

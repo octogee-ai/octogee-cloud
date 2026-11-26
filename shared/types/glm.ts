@@ -1163,6 +1163,7 @@ export interface OperationStallPark {
   attempts: number;
   consecutiveFailures: number;
   stuckSince: number;
+  stalledSince: number;
   queuedBehind: string[];
   auditId: string;
   resumedAt?: number;

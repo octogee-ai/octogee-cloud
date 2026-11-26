@@ -448,7 +448,7 @@ describe("gateway operation queue — enqueue instead of reject (glmOperations w
         nextAttemptAt: Date.now() + 60_000, waitingOn: "parked; an operator resumes it",
         input: { fromGatewayId: "iso-a", toGatewayId: "shared-target" },
         stallPark: { parkedAt: 2, reason: "repeated-failure", repeatedError: "status 503", lastError: "status 503",
-          attempts: 3, consecutiveFailures: 3, stuckSince: 1, queuedBehind: [], auditId: "audit-park" },
+          attempts: 3, consecutiveFailures: 3, stuckSince: 1, stalledSince: 2, queuedBehind: [], auditId: "audit-park" },
       }),
       "placement": baseOp({ id: "placement", kind: "migrate-user", createdAt: 2,
         input: { fromGatewayId: "shared-other", toGatewayId: "shared-target" } }),

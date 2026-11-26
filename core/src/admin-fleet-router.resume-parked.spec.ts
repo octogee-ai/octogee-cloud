@@ -17,7 +17,7 @@ function parkedFleet(overrides: Record<string, unknown> = {}): Seed {
       waitingOn: PARKED_OPERATION_WAITING_ON,
       stallPark: {
         parkedAt: PARKED_AT, reason: "repeated-failure", repeatedError: NOT_CONFIRMED, lastError: NOT_CONFIRMED,
-        attempts: 3, consecutiveFailures: 3, stuckSince: 10, queuedBehind: ["placement-a"], auditId: "audit-park",
+        attempts: 3, consecutiveFailures: 3, stuckSince: 10, stalledSince: 20, queuedBehind: ["placement-a"], auditId: "audit-park",
       },
       ...overrides,
     }),
@@ -95,7 +95,7 @@ describe("parked operations", () => {
     expect(refused.body.error).toContain("is not parked");
     const resumed = harness(parkedFleet({ stallPark: {
       parkedAt: PARKED_AT, reason: "repeated-failure", repeatedError: NOT_CONFIRMED, lastError: NOT_CONFIRMED, attempts: 3,
-      consecutiveFailures: 3, stuckSince: 10, queuedBehind: [], auditId: "audit-park", resumedAt: PARKED_AT + 1,
+      consecutiveFailures: 3, stuckSince: 10, stalledSince: 20, queuedBehind: [], auditId: "audit-park", resumedAt: PARKED_AT + 1,
     } }));
     await send(resumed.app, resume(), true).expect(409);
     const running = harness(parkedFleet({ status: "running", startedAt: 5 }));
