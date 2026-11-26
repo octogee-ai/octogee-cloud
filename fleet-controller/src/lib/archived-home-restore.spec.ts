@@ -34,7 +34,8 @@ function fixture(generation = 2) {
     create: vi.fn(async () => ({ description: instance })), retainHome: vi.fn(async () => newDisk),
   };
   const rebind = vi.fn(async () => instance);
-  const run = () => restoreArchivedHome({ store, vm: vm as unknown as GatewayVmClient, rebind }, { ownerUid: uid, gatewayId }, spec, input);
+  const run = (desktop: GatewayVmSpec["desktop"] = spec.desktop) =>
+    restoreArchivedHome({ store, vm: vm as unknown as GatewayVmClient, rebind }, { ownerUid: uid, gatewayId }, { ...spec, desktop }, input);
   return { store, vm, run, rebind };
 }
 
@@ -134,4 +135,28 @@ describe("rearm a failed generation after the snapshot-backed disk was committed
       expect(vm.create).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("restore a home onto the desktop it was archived from", () => {
+  it("creates a new VM on the snapshot-backed home of an archived Omarchy VM", async () => {
+    const { store, vm, run } = fixture();
+    await store.users.records.patch(uid, { home: { homeArchive: { ...archive, desktop: "omarchy" } as never } });
+    await expect(run("omarchy")).resolves.toEqual(instance);
+    expect(vm.restoreHomeFromSnapshot).toHaveBeenCalledWith(expect.objectContaining({ snapshot: archive.snapshot, ownerUid: uid, zone }));
+    expect(vm.create).toHaveBeenCalledWith(expect.objectContaining({ retainedHome: newDisk, zones: [zone] }));
+    expect((await store.users.records.get(uid))?.home).toMatchObject({ homeArchive: { phase: "restored", snapshot: archive.snapshot }, homeDisk: newDisk });
+  });
+
+  it.each([
+    ["an Omarchy archive onto X11", "omarchy", "x11"],
+    ["an X11 archive onto Omarchy", "x11", "omarchy"],
+    ["an archive recorded before desktops were named onto Omarchy", undefined, "omarchy"],
+  ] as const)("refuses %s before touching the snapshot", async (_name, archived, target) => {
+    const { store, vm, run } = fixture();
+    await store.users.records.patch(uid, { home: { homeArchive: { ...archive, ...(archived ? { desktop: archived } : {}) } as never } });
+    await expect(run(target)).rejects.toThrow(/same desktop/);
+    expect(vm.restoreHomeFromSnapshot).not.toHaveBeenCalled();
+    expect(vm.create).not.toHaveBeenCalled();
+    expect((await store.users.records.get(uid))?.home.homeArchive?.phase).toBe("archived");
+  });
 });

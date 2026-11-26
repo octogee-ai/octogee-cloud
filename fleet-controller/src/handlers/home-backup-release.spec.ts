@@ -113,6 +113,24 @@ describe("coalesce a parked return with purged restored backup custody", () => {
     expect((await h.store.users.records.get(uid))?.home.homeArchive?.operationId).toBe(newArchiveId);
   });
 
+  it("archives the returned VM again without a grant when its sizing profile snapshots idle storage", async () => {
+    const h = fixture();
+    h.docs["config/orchestrator"] = { sizingProfiles: { hobby: { isolation: "isolated", sizingTier: "s", fallbackStorageGb: null,
+      computer: { runtime: "gce-vm", desktop: "omarchy", machineType: "e2-standard-2", provisioningModel: "SPOT",
+        bootDisk: { sizeGb: 80, type: "pd-ssd" }, homeSizeGiB: 10, idleStorage: "snapshot" } } } };
+    await h.store.users.placementReceipts.create(uid, receipt);
+    await h.create();
+    await h.store.journal.operations.patch(backupOperationId, { status: "running", startedAt: 800 });
+    await parkRestoredOwner(h);
+    Object.assign(h.docs[`glmGateways/${target}`], { vmSpec: { desktop: "omarchy" } });
+    await expect(h.run()).resolves.toMatchObject({ success: true });
+    const current = (await h.store.users.records.get(uid))!;
+    expect(current.home.homeArchive).toMatchObject({ phase: "preparing", desktop: "omarchy", instanceId: archive.restoredInstanceId });
+    expect(await h.store.journal.operations.get(current.home.homeArchive!.operationId)).toMatchObject({
+      status: "pending", origin: "automatic", input: { action: "archive", expectedGatewayId: target },
+    });
+  });
+
   it.each(["active", "newer-generation", "reacquired", "changed-instance", "competing-operation", "missing-grant"] as const)(
     "clears only the completed backup for an ineligible %s owner", async condition => {
       const h = fixture();

@@ -21,10 +21,11 @@ function isPositiveWhole(value) {
 function computerReadFields(computer) {
     if (computer.runtime === "cluster")
         return { runtime: computer.runtime, homeSizeGiB: computer.homeSizeGiB };
-    const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB } = computer;
+    const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB, idleStorage } = computer;
     return {
         runtime, desktop, machineType, provisioningModel, homeSizeGiB,
         bootDisk: bootDisk === null ? null : { sizeGb: bootDisk.sizeGb, type: bootDisk.type },
+        ...(idleStorage === undefined ? {} : { idleStorage }),
     };
 }
 function onlyReadFields(profile) {

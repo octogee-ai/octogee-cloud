@@ -127,3 +127,57 @@ describe("real archive custody transition", () => {
     expect((await store.users.records.get(uid))?.fences.computerRecovery?.operationId).toEqual(operationId);
   });
 });
+
+describe("archive a parked VM whose sizing profile snapshots idle storage", () => {
+  const policyOperation = { ...operation, origin: "automatic", createdBy: "glm-controller-return-home-archive" } as Operation;
+
+  async function policyFixture(idleStorage?: "snapshot") {
+    const { store, vm, ctx } = fixture();
+    await store.config.orchestrator.patch({ sizingProfiles: { "desktop-small": { isolation: "isolated", sizingTier: "s", fallbackStorageGb: null,
+      computer: { runtime: "gce-vm", desktop: "omarchy", machineType: "e2-standard-2", provisioningModel: "SPOT",
+        bootDisk: { sizeGb: 80, type: "pd-ssd" }, homeSizeGiB: 10, ...(idleStorage ? { idleStorage } : {}) } } } });
+    await store.users.records.patch(uid, { home: { computer: { clear: true }, homeArchive: {
+      phase: "preparing", operationId, gatewayId, instanceId: source.instanceId, desktop: "omarchy",
+      source: { instanceName: source.name, zone: source.zone, homeDiskId: home.id },
+    } } });
+    await store.fleetRegistry.patch(gatewayId, { vmSpec: { desktop: "omarchy" } as never });
+    return { store, vm, ctx, run: createHomeArchiveHandler({ store, vm: vm as never }) };
+  }
+
+  it("deletes the VM and both disks once the home snapshot is verified", async () => {
+    const { store, vm, ctx, run } = await policyFixture("snapshot");
+    vm.deleteRetainingHome.mockImplementation(async () => {
+      expect(vm.verifyHomeSnapshot).toHaveBeenCalledWith(snapshot, uid);
+      expect((await store.users.records.get(uid))?.home.homeArchive).toMatchObject({ phase: "snapshot-ready", snapshot, bootDisk });
+    });
+    await expect(run(policyOperation, ctx)).resolves.toMatchObject({ success: true, output: { snapshot, zeroProvisionedDisks: true } });
+    expect(vm.deleteRetainingHome).toHaveBeenCalledWith(source.name, source.zone, uid, home, source.instanceId);
+    expect(vm.deleteRetainedHome).toHaveBeenCalledWith(home, uid);
+    const owner = await store.users.records.get(uid);
+    expect(owner?.home.homeArchive).toMatchObject({ phase: "archived", snapshot, desktop: "omarchy" });
+    expect(owner?.fences.computerRecovery).toBeUndefined();
+    expect((await store.fleetRegistry.get(gatewayId))?.vm).toBeNull();
+  });
+
+  it.each([
+    ["is still being taken", (vm: ReturnType<typeof fixture>["vm"]) => vm.snapshotStoppedHome.mockResolvedValue(null)],
+    ["cannot be verified", (vm: ReturnType<typeof fixture>["vm"]) => vm.verifyHomeSnapshot.mockRejectedValue(new Error("Snapshot provenance differs"))],
+  ])("retains the VM and both disks while the home snapshot %s", async (_name, withhold) => {
+    const { store, vm, ctx, run } = await policyFixture("snapshot");
+    withhold(vm);
+    await run(policyOperation, ctx).catch(() => undefined);
+    expect(vm.deleteRetainingHome).not.toHaveBeenCalled();
+    expect(vm.deleteRetainedHome).not.toHaveBeenCalled();
+    expect((await store.users.records.get(uid))?.home.homeDisk).toEqual(home);
+    expect((await store.users.records.get(uid))?.fences.computerRecovery?.operationId).toBe(operationId);
+  });
+
+  it("refuses to archive for a profile that retains idle storage", async () => {
+    const { vm, ctx, run } = await policyFixture();
+    await expect(run(policyOperation, ctx)).rejects.toThrow(/grant/);
+    expect(vm.stop).not.toHaveBeenCalled();
+    expect(vm.snapshotStoppedHome).not.toHaveBeenCalled();
+    expect(vm.deleteRetainingHome).not.toHaveBeenCalled();
+    expect(vm.deleteRetainedHome).not.toHaveBeenCalled();
+  });
+});

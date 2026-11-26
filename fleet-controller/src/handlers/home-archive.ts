@@ -1,4 +1,4 @@
-import { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, isAuthorizedHomeArchiveOrigin, simpleHomePreparation } from "@octogee/core/admin-fleet-router";
+import { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, isAuthorizedHomeArchiveOrigin, readParkedHomeArchiveGrant, simpleHomePreparation } from "@octogee/core/admin-fleet-router";
 import type { FleetRegistryRecord, PlatformStateRepositories, PlatformStateStore, PlatformUserRecord, UserHomeArchive } from "@octogee/core/platform-state";
 import { isUserParkedVm, type RetainedUserHome } from "@octogee/shared/types/glm";
 import type { GatewayVmClient, GatewayVmDescription } from "../lib/compute-vm.js";
@@ -140,12 +140,15 @@ async function disposeParkedHome(deps: { store: PlatformStateStore; vm: GatewayV
   return { steps: [], success: true, output: { snapshot, zeroProvisionedDisks: true } };
 }
 
-function requireArchiveOperation(operation: Parameters<OperationHandler>[0], ctx: OperationContext,
-  grant: { ownerUid: string; sizingProfile: string } | undefined) {
+async function requireArchiveOperation(store: PlatformStateStore, operation: Parameters<OperationHandler>[0], ctx: OperationContext,
+  operatorGrant: { ownerUid: string; sizingProfile: string } | undefined) {
   const { ownerUid, expectedGatewayId, expectedInstanceId, action } = operation.input;
-  if (!grant || ownerUid !== grant.ownerUid || action !== "archive" || !isAuthorizedHomeArchiveOrigin(operation) ||
+  const refuse = (): never => { throw new Error("Home archive requires an exact archive grant and operation claim"); };
+  if (typeof ownerUid !== "string" || action !== "archive" || !isAuthorizedHomeArchiveOrigin(operation) ||
       operation.input.uid !== ownerUid || typeof expectedGatewayId !== "string" || typeof expectedInstanceId !== "string" ||
-      !ctx.assertActiveClaim) throw new Error("Home archive requires an exact operator grant and operation claim");
+      !ctx.assertActiveClaim) return refuse();
+  const grant = await readParkedHomeArchiveGrant(store, { ownerUid, gatewayId: expectedGatewayId }, operatorGrant);
+  if (!grant) return refuse();
   const identity = { ownerUid: grant.ownerUid, gatewayId: expectedGatewayId, instanceId: expectedInstanceId,
     operationId: operation.id, sizingProfile: grant.sizingProfile };
   return { identity, assertClaim: ctx.assertActiveClaim };
@@ -166,7 +169,7 @@ export function createHomeArchiveHandler(deps: {
   store: PlatformStateStore; vm: GatewayVmClient; grant?: { ownerUid: string; sizingProfile: string };
 }): OperationHandler {
   return async (operation, ctx) => {
-    const { identity, assertClaim } = requireArchiveOperation(operation, ctx, deps.grant);
+    const { identity, assertClaim } = await requireArchiveOperation(deps.store, operation, ctx, deps.grant);
     const read = async () => { await assertClaim(); return readArchive(deps.store, identity); };
     const { vm } = deps;
     const { owner, archive, parked, home } = await read();

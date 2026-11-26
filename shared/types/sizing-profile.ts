@@ -18,6 +18,7 @@ export interface GatewayVmProfile {
   readonly provisioningModel: GatewayVmProvisioningModel | null;
   readonly bootDisk: { readonly sizeGb: number; readonly type: GatewayVmBootDiskType } | null;
   readonly homeSizeGiB: number;
+  readonly idleStorage?: "snapshot";
 }
 
 export interface GatewayPodProfile {
@@ -43,10 +44,11 @@ function isFieldMap(value: unknown): value is Readonly<Record<string, unknown>> 
 
 export function isGatewayVmProfile(value: unknown): value is GatewayVmProfile {
   if (!isFieldMap(value)) return false;
-  const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB } = value;
+  const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB, idleStorage } = value;
   return (
     runtime === "gce-vm" &&
     isGatewayVmDesktop(desktop) &&
+    (idleStorage === undefined || idleStorage === "snapshot") &&
     (machineType === null || typeof machineType === "string") &&
     (provisioningModel === null || (GATEWAY_VM_PROVISIONING_MODELS as readonly unknown[]).includes(provisioningModel)) &&
     (bootDisk === null ||
@@ -64,6 +66,11 @@ export function isGatewayPodProfile(value: unknown): value is GatewayPodProfile 
 export function ephemeralPodHomeGiB(profile: GatewaySizingProfile | null | undefined): number | undefined {
   return profile?.isolation === "isolated" && profile.computer.runtime === "cluster" && profile.computer.homeStorage === "emptyDir"
     ? profile.computer.homeSizeGiB : undefined;
+}
+
+export function idleSnapshotDesktop(profile: GatewaySizingProfile | null | undefined): GatewayVmDesktop | undefined {
+  return profile?.isolation === "isolated" && profile.computer.runtime === "gce-vm" && profile.computer.idleStorage === "snapshot"
+    ? profile.computer.desktop : undefined;
 }
 
 export function isGatewaySizingProfile(value: unknown): value is GatewaySizingProfile {

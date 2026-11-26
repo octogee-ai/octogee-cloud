@@ -57,6 +57,41 @@ describe("admin home archive", () => {
     expect(test.operations()).toHaveLength(0);
   });
 
+  const snapshotProfile = (idleStorage?: "snapshot") => ({ isolation: "isolated", sizingTier: "s", fallbackStorageGb: null, computer: {
+    runtime: "gce-vm", desktop: "omarchy", machineType: "e2-standard-2", provisioningModel: "SPOT",
+    bootDisk: { sizeGb: 80, type: "pd-ssd" }, homeSizeGiB: 10, ...(idleStorage ? { idleStorage } : {}) } });
+  const parkedOwner = (idleStorage?: "snapshot") => ({
+    "config/orchestrator": { sizingProfiles: { "desktop-small": snapshotProfile(idleStorage) } },
+    [`gateways/${GATEWAY}`]: { ...gateway, desiredStatus: "paused", sizingProfile: "desktop-small" },
+    [`glmGateways/${GATEWAY}`]: { ...runtime, vmSpec: { desktop: "omarchy" }, vm: { ...vm, status: "SUSPENDED" } },
+    [`users/${OWNER}`]: { username: "fixture", provisioning: {
+      homeDisk: { id: "124", zone: vm.zone, source: `projects/fixture/zones/${vm.zone}/disks/fixture-home` },
+      openclaw: { slug: "fixture", gatewayId: "shared-a", activationLease: {
+        status: "parked", leaseId: "lease-1", generation: 1, targetGatewayId: GATEWAY, returnOperationId: "return-1" } },
+    } },
+    "glmOperations/return-1": { id: "return-1", kind: "migrate-user", status: "succeeded", createdAt: 1, startedAt: 2, completedAt: 11,
+      inputUid: OWNER, input: { uid: OWNER, fromGatewayId: GATEWAY, toGatewayId: "shared-a" },
+      output: { nativeSourcePark: { parked: "suspended" } }, steps: [] },
+  });
+
+  it("queues the archive of a parked VM whose sizing profile snapshots idle storage, in any environment and without a grant", async () => {
+    const h = harness(parkedOwner("snapshot"), "admin", true, "prod");
+    const res = await request(h.app).post(`/users/${OWNER}/vm/archive`).send({}).expect(202);
+    expect(res.body).toEqual({ ownerUid: OWNER, operationId: expect.any(String) });
+    expect(h.operations()).toEqual([expect.objectContaining({
+      status: "pending", origin: "operator",
+      input: expect.objectContaining({ action: "archive", ownerUid: OWNER, expectedGatewayId: GATEWAY, expectedInstanceId: vm.instanceId }),
+    })]);
+    await request(h.app).post(`/users/${OWNER}/vm/archive`).send({}).expect(202).expect(res.body);
+    expect(h.operations()).toHaveLength(1);
+  });
+
+  it("refuses to archive a parked VM whose sizing profile retains idle storage", async () => {
+    const h = harness(parkedOwner(), "admin", true, "prod");
+    await request(h.app).post(`/users/${OWNER}/vm/archive`).send({}).expect(409);
+    expect(h.operations()).toHaveLength(0);
+  });
+
   it("rejects supplied physical resource identifiers without creating an operation", async () => {
     vi.stubEnv("GATEWAY_TEST_HOME_ARCHIVE_GRANT", `${OWNER}:desktop-small`);
     const h = harness({}, "admin", true, "test");

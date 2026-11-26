@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { enqueueParkedHomeArchive, resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
+import { enqueueParkedHomeArchive, readOwnerHomeArchiveGrant, resolveParkedHomeArchiveGrant } from "./parked-home-archive.js";
 import type { Request, Router } from "express";
 import { isValidGatewayId, readUserParkedVm } from "@octogee/shared/types/glm";
 import { projectGatewayDesiredRootForGateway } from "@octogee/shared/types/gateway-releases";
@@ -211,9 +211,10 @@ export function addAdminComputerRoutes(router: Router, deps: VmRouterDeps): void
       const actor = req as Request & { uid?: string; isAdmin?: boolean };
       if (!actor.uid) { res.status(401).json({ error: "Unauthenticated" }); return; }
       if (!actor.isAdmin) { res.status(403).json({ error: "Admin access required" }); return; }
-      const grant = resolveParkedHomeArchiveGrant(deps.releaseEnvironment, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT);
       const ownerUid = req.params.uid;
-      if (!grant || grant.ownerUid !== ownerUid) throw new VmAdmissionError(409, "No exact parked home archive grant");
+      const grant = await readOwnerHomeArchiveGrant(deps.store, ownerUid,
+        resolveParkedHomeArchiveGrant(deps.releaseEnvironment, process.env.GATEWAY_TEST_HOME_ARCHIVE_GRANT));
+      if (!grant) throw new VmAdmissionError(409, "No exact parked home archive grant");
       forceRequested(req, "gatewayId");
       const admit = async (dryRun = false) => {
         try {
@@ -223,7 +224,7 @@ export function addAdminComputerRoutes(router: Router, deps: VmRouterDeps): void
         }
       };
       const operationId = await deps.journal({
-        req, what: "archive parked VM home", why: "TEST operator archive request", target: { ownerUid },
+        req, what: "archive parked VM home", why: "operator archive request", target: { ownerUid },
         preActionStatus: { binding: "parked-owner" }, mutation: { kind: "archive-computer-home", ownerUid },
         action: () => admit(),
         dryRunRefusal: async () => { await admit(true); return null; },

@@ -1,16 +1,53 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { isUserParkedVm } from "@octogee/shared/types/glm";
+import { isUserParkedVm, type GatewayVmDesktop } from "@octogee/shared/types/glm";
+import { idleSnapshotDesktop } from "@octogee/shared/types/sizing-profile";
+import { createServiceLogger } from "@octogee/shared/server/service-logger";
 import { builderReturnOperationId } from "@octogee/shared/types/isolated-operation-ids";
 import { restoredHomeBackupReleaseId } from "./isolated-gateway-lifecycle/home-backup-release.js";
 import type { OperationRecord } from "./platform-state/operations.js";
 import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
-import type { OpaqueMap, PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
+import type { OpaqueMap, PlatformStateRepositories, PlatformStateStore, PlatformStateTransaction, Stored } from "./platform-state/store.js";
 import type { PlatformUserRecord, UserActivationLease, UserHomeArchive } from "./platform-state/users.js";
 
 export interface ParkedHomeArchiveGrant {
   ownerUid: string;
   sizingProfile: string;
+  desktop?: GatewayVmDesktop;
+}
+
+export const logger = createServiceLogger("idle-storage");
+
+const OPERATOR_GRANT_DESKTOP: GatewayVmDesktop = "x11";
+
+function grantedArchiveDesktop(grant: ParkedHomeArchiveGrant): GatewayVmDesktop {
+  return grant.desktop ?? OPERATOR_GRANT_DESKTOP;
+}
+
+export async function readParkedHomeArchiveGrant(
+  state: Pick<PlatformStateRepositories, "config" | "gateways">,
+  target: { ownerUid: string; gatewayId: string },
+  operatorGrant: ParkedHomeArchiveGrant | undefined,
+): Promise<ParkedHomeArchiveGrant | undefined> {
+  const root = await state.gateways.roots.get(target.gatewayId);
+  const sizingProfile = root?.sizingProfile;
+  if (root?.ownerUid === target.ownerUid && sizingProfile) {
+    const profiles = (await state.config.orchestrator.get())?.sizingProfiles ?? {};
+    const desktop = idleSnapshotDesktop(Object.hasOwn(profiles, sizingProfile) ? profiles[sizingProfile] : undefined);
+    if (desktop) return { ownerUid: target.ownerUid, sizingProfile, desktop };
+  }
+  return operatorGrant?.ownerUid === target.ownerUid ? operatorGrant : undefined;
+}
+
+export async function readOwnerHomeArchiveGrant(
+  state: Pick<PlatformStateRepositories, "config" | "gateways" | "users">,
+  ownerUid: string,
+  operatorGrant: ParkedHomeArchiveGrant | undefined,
+): Promise<ParkedHomeArchiveGrant | undefined> {
+  const owner = await state.users.records.get(ownerUid);
+  const gatewayId = owner?.home.homeArchive?.gatewayId ?? owner?.activationLease?.targetGatewayId;
+  if (typeof gatewayId !== "string") return operatorGrant?.ownerUid === ownerUid ? operatorGrant : undefined;
+  return readParkedHomeArchiveGrant(state, { ownerUid, gatewayId }, operatorGrant);
 }
 
 export function parkedHomeUnderSnapshotCustody(owner: PlatformUserRecord | null): boolean {
@@ -95,19 +132,19 @@ function parkedArchiveInputs(owner: Stored<PlatformUserRecord>) {
 type ParkedInput = ReturnType<typeof parkedArchiveInputs>;
 type ArchiveSource = NonNullable<UserHomeArchive["source"]>;
 
-function observedArchiveVm(runtime: FleetRegistryRecord | null, homeZone: unknown) {
+function observedArchiveVm(runtime: FleetRegistryRecord | null, homeZone: unknown, desktop: GatewayVmDesktop) {
   const observed = runtime?.vm;
-  return runtime?.runtime === "gce-vm" && runtime.vmSpec?.desktop === "x11" && observed &&
+  return runtime?.runtime === "gce-vm" && runtime.vmSpec?.desktop === desktop && observed &&
     ["SUSPENDED", "TERMINATED", "STOPPED"].includes(observed.status ?? "") &&
     numericIdentity(observed.instanceId) && observed.zone === homeZone ? observed : null;
 }
 
-function observedArchiveSource(owner: PlatformUserRecord, input: ParkedInput, runtime: FleetRegistryRecord | null) {
+function observedArchiveSource(owner: PlatformUserRecord, input: ParkedInput, runtime: FleetRegistryRecord | null, desktop: GatewayVmDesktop) {
   const homeZone = owner.home.homeDisk?.zone;
-  if (runtime !== null) return observedArchiveVm(runtime, homeZone);
+  if (runtime !== null) return observedArchiveVm(runtime, homeZone, desktop);
   if (owner.home.projectStorageNativeBoot === true || owner.fences.pendingNativeSchedulerRetirement !== undefined) return null;
   const parked = owner.home.computer;
-  return isUserParkedVm(parked) && !parked.disposable && parked.vmSpec?.desktop === "x11" &&
+  return isUserParkedVm(parked) && !parked.disposable && parked.vmSpec?.desktop === desktop &&
     parked.gatewayId === input.gatewayId && parked.zone === homeZone && numericIdentity(parked.instanceId) ? parked : null;
 }
 
@@ -206,10 +243,11 @@ async function verifyArchiveInputs(tx: PlatformStateTransaction, owner: Stored<P
       !returned || !hasVerifiedReturn(returned, ownerUid, gatewayId, sharedId) || archiveHasPendingConflict(pending, backup)) {
     throw new IneligibleHomeArchiveError("Home archive requires a settled native return to the serving Shared assignment");
   }
-  const observed = requireParkedArchiveVm(observedArchiveSource(owner, input, runtime), backup);
+  const desktop = grantedArchiveDesktop(grant);
+  const observed = requireParkedArchiveVm(observedArchiveSource(owner, input, runtime, desktop), backup);
   const source = { instanceName: observed.instanceName, zone: observed.zone, homeDiskId: owner.home.homeDisk!.id as string };
   const nativeSchedulerRetirement = archiveNativeScheduler(owner, input, returned, source, observed.instanceId);
-  return { gatewayId, sharedId, instanceId: observed.instanceId, assignmentEpoch: assignment.epoch, source, nativeSchedulerRetirement };
+  return { gatewayId, sharedId, instanceId: observed.instanceId, assignmentEpoch: assignment.epoch, source, desktop, nativeSchedulerRetirement };
 }
 
 interface ArchiveTarget {
@@ -218,6 +256,7 @@ interface ArchiveTarget {
   sharedId: string;
   assignmentEpoch: number;
   source: ArchiveSource;
+  desktop: GatewayVmDesktop;
   nativeSchedulerRetirement?: OpaqueMap;
 }
 
@@ -226,7 +265,7 @@ export async function writeParkedHomeArchive(tx: PlatformStateTransaction, owner
   const ownerUid = owner.uid;
   const { gatewayId, instanceId, sharedId, assignmentEpoch } = target;
   const { operationId, createdBy, origin, now } = operation;
-  const homeArchive: UserHomeArchive = { phase: "preparing", operationId, gatewayId, instanceId, source: target.source,
+  const homeArchive: UserHomeArchive = { phase: "preparing", operationId, gatewayId, instanceId, source: target.source, desktop: target.desktop,
     ...(target.nativeSchedulerRetirement ? { nativeSchedulerRetirement: target.nativeSchedulerRetirement } : {}) };
   await tx.users.records.patch(ownerUid, { home: { homeArchive } }, { revision: owner.revision });
   await tx.users.records.setFence(ownerUid, "computerRecovery", {
@@ -240,9 +279,9 @@ export async function writeParkedHomeArchive(tx: PlatformStateTransaction, owner
 }
 
 export async function planReturnedHomeArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, next: UserActivationLease,
-  grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined> {
+  operatorGrant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined> {
   if (owner.home.homeArchive !== undefined) return;
-  return planEligibleReturnedArchive(tx, owner, next, grant, { now });
+  return planEligibleReturnedArchive(tx, owner, next, operatorGrant, { now });
 }
 
 function matchesReturnedBackup(owner: Stored<PlatformUserRecord>, releaseOperationId: string, next: UserActivationLease) {
@@ -256,17 +295,22 @@ function matchesReturnedBackup(owner: Stored<PlatformUserRecord>, releaseOperati
 }
 
 export async function planArchiveAfterBackupRelease(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>,
-  releaseOperationId: string, grant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined> {
+  releaseOperationId: string, operatorGrant: ParkedHomeArchiveGrant | undefined, now: number): Promise<(() => Promise<void>) | undefined> {
   const next = owner.activationLease;
-  if (!next || !grant) return;
+  if (!next) return;
   const backup = matchesReturnedBackup(owner, releaseOperationId, next);
-  if (backup) return planEligibleReturnedArchive(tx, owner, next, grant, { now, backup });
+  if (backup) return planEligibleReturnedArchive(tx, owner, next, operatorGrant, { now, backup });
 }
 
 async function planEligibleReturnedArchive(tx: PlatformStateTransaction, owner: Stored<PlatformUserRecord>, next: UserActivationLease,
-  grant: ParkedHomeArchiveGrant | undefined, { now, backup }: { now: number; backup?: ReleasedHomeBackup }): Promise<(() => Promise<void>) | undefined> {
-  if (!grant || grant.ownerUid !== owner.uid || next.status !== "parked" || !pilotHomeEligible(owner)) return;
+  operatorGrant: ParkedHomeArchiveGrant | undefined, { now, backup }: { now: number; backup?: ReleasedHomeBackup }): Promise<(() => Promise<void>) | undefined> {
+  if (next.status !== "parked" || typeof next.targetGatewayId !== "string") return;
+  const grant = await readParkedHomeArchiveGrant(tx, { ownerUid: owner.uid, gatewayId: next.targetGatewayId }, operatorGrant);
+  if (!grant) return;
   try {
+    if (!pilotHomeEligible(owner)) {
+      throw new IneligibleHomeArchiveError("Home archive requires a simple retained home with no migration, erasure or transfer in progress");
+    }
     const target = await verifyArchiveInputs(tx, owner, parkedArchiveInputs({ ...owner, activationLease: next }), grant, backup);
     const operationId = randomUUID();
     return () => writeParkedHomeArchive(tx, owner, target, {
@@ -274,6 +318,9 @@ async function planEligibleReturnedArchive(tx: PlatformStateTransaction, owner: 
     });
   } catch (error) {
     if (!(error instanceof IneligibleHomeArchiveError)) throw error;
+    logger.warn("keeping the parked VM and its disks while idle", {
+      uid: owner.uid, gatewayId: next.targetGatewayId, sizingProfile: grant.sizingProfile, reason: error.message,
+    });
     return undefined;
   }
 }

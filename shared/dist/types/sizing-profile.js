@@ -6,9 +6,10 @@ function isFieldMap(value) {
 export function isGatewayVmProfile(value) {
     if (!isFieldMap(value))
         return false;
-    const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB } = value;
+    const { runtime, desktop, machineType, provisioningModel, bootDisk, homeSizeGiB, idleStorage } = value;
     return (runtime === "gce-vm" &&
         isGatewayVmDesktop(desktop) &&
+        (idleStorage === undefined || idleStorage === "snapshot") &&
         (machineType === null || typeof machineType === "string") &&
         (provisioningModel === null || GATEWAY_VM_PROVISIONING_MODELS.includes(provisioningModel)) &&
         (bootDisk === null ||
@@ -23,6 +24,10 @@ export function isGatewayPodProfile(value) {
 export function ephemeralPodHomeGiB(profile) {
     return profile?.isolation === "isolated" && profile.computer.runtime === "cluster" && profile.computer.homeStorage === "emptyDir"
         ? profile.computer.homeSizeGiB : undefined;
+}
+export function idleSnapshotDesktop(profile) {
+    return profile?.isolation === "isolated" && profile.computer.runtime === "gce-vm" && profile.computer.idleStorage === "snapshot"
+        ? profile.computer.desktop : undefined;
 }
 export function isGatewaySizingProfile(value) {
     if (!isFieldMap(value))
