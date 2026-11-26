@@ -335,7 +335,7 @@ prepareKeyImportDir: (slug: string) => Promise<string>;
     erasureAgentIds?: readonly string[],
   ) => Promise<RemoveUserResult>;
 
-  releaseAgent?: (agentId: string) => Promise<void>;
+  releaseAgent?: (slug: string, agentId: string, signal?: AbortSignal) => Promise<void>;
   detachSourceAgents?: (slug: string, agentIds: readonly string[], signal: AbortSignal) => Promise<void>;
 }
 

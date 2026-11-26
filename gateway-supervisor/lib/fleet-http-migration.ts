@@ -234,11 +234,11 @@ procRoot?: string;
 
 async function releaseAgentForImport(
   deps: MigrationHandlerDeps,
-  activation: ConfiguredUserActivation | null,
+  target: { activation: ConfiguredUserActivation | null; slug: string; heldTarget?: UserImportTarget },
   agentId: string,
   log: (message: string, fields?: LogContext) => void,
-  heldTarget?: UserImportTarget,
 ): Promise<void> {
+  const { activation, slug, heldTarget } = target;
   if (heldTarget) {
     await assertSystemConfigImportHeld(deps, heldTarget);
     log(`[migration-rsync] OpenClaw is held for this boot; replacing ${agentId}'s database offline`);
@@ -257,15 +257,15 @@ async function releaseAgentForImport(
     throw new Error(`cannot replace agent ${agentId}'s database: this gateway cannot release agents`);
   }
   if (!activation?.live) {
-    await deps.adapter.releaseAgent(agentId);
+    await deps.adapter.releaseAgent(slug, agentId);
     return;
   }
   try {
-    await deps.adapter.releaseAgent(agentId);
+    await deps.adapter.releaseAgent(slug, agentId);
   } catch (error) {
     if (!(error instanceof Error) || !NATIVE_CLEANUP_INCOMPLETE.test(error.message)) throw error;
     log(`[migration-rsync] releasing ${agentId} left its native cleanup pending; resuming the deletion before replacing its database`);
-    await deps.adapter.releaseAgent(agentId);
+    await deps.adapter.releaseAgent(slug, agentId);
   }
 }
 
@@ -2426,7 +2426,7 @@ export function createPushRsyncStateHandler(deps: MigrationHandlerDeps): Request
             if (agentIds.length === 1) {
               controller.signal.throwIfAborted();
               if (!deps.adapter.releaseAgent) throw new Error("Gateway cannot detach PostgreSQL agents");
-              await deps.adapter.releaseAgent(agentIds[0]!);
+              await deps.adapter.releaseAgent(body.slug, agentIds[0]!, controller.signal);
               return;
             }
             await retained?.assertCurrent();
@@ -2995,7 +2995,7 @@ async function deliverStagedImport(input: StagedImportInput): Promise<void> {
     const installStartedAt = Date.now();
     await installPreparedAgentStores({
       prepared,
-      releaseAgent: (agentId) => releaseAgentForImport(deps, input.activation, agentId, log, input.heldTarget),
+      releaseAgent: (agentId) => releaseAgentForImport(deps, input, agentId, log),
       procRoot: deps.procRoot ?? PROC_ROOT,
       log,
     });

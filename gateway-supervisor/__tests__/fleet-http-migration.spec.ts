@@ -3672,7 +3672,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     mode?: "pre" | "final";
     runOpenClaw?: ReturnType<typeof fakeOpenClaw>;
     log?: MigrationHandlerDeps["log"];
-    releaseAgent?: () => Promise<void>;
+    releaseAgent?: (slug: string, agentId: string, signal?: AbortSignal) => Promise<void>;
     surgeSourceOpenClawHeld?: MigrationHandlerDeps["surgeSourceOpenClawHeld"];
   } = {}): {
     handler: ReturnType<typeof createPushRsyncStateHandler>;
@@ -3862,7 +3862,26 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     await handler(req, res, vi.fn());
 
     expect(getStatus()).toBe(200);
-    expect(adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("octogee-chris-coach");
+    expect(adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("chris", "octogee-chris-coach", expect.any(AbortSignal));
+  });
+
+  it("detaches a one-agent user's source behind only that user's runtime publication", async () => {
+    const stateDir = await mkTempRoot();
+    await writeStore(stateDir, CARRIED_STORE, () => {});
+    spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+    const guard = new OpenClawRuntimeUpdateGuard();
+    let settleBob!: () => void;
+    await guard.run(async () => undefined, { slug: "bob", holdUntil: new Promise<void>((resolve) => { settleBob = resolve; }) });
+    const { handler, req } = pushRsync(stateDir, "one-agent-behind-other-publication", {
+      surgeSourceOpenClawHeld: vi.fn(async () => false),
+      releaseAgent: (slug, _agentId, signal) => guard.run(async () => undefined, { slug, ...(signal ? { signal } : {}) }),
+    });
+    const { res, getStatus } = mkResponse();
+
+    try {
+      await handler(req, res, vi.fn());
+      expect(getStatus()).toBe(200);
+    } finally { settleBob(); }
   });
 
   it("leaves a user-owned agent folder the migration authority does not name on the shared source", async () => {
