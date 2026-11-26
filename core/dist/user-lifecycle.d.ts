@@ -232,7 +232,7 @@ export interface UserLifecycleAdapter {
         timeoutMs: number;
     }) => Promise<boolean>;
     projectAgentsHealthy: (snapshot: UserSnapshot) => Promise<boolean>;
-    reportProvisioned: (ctx: UserContext, report: {
+    reportProvisioned: (ctx: Pick<UserContext, "uid" | "slug">, report: {
         first: boolean;
     }) => Promise<void>;
     onMounted?: (slug: string) => void;

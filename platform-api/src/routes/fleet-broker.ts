@@ -339,11 +339,13 @@ const defaultRenderAvatar: RenderAvatar = async (bytes) => {
   return renderAvatarPng(bytes);
 };
 
-function needsDefaultAgentPicture(agent: Record<string, unknown> | undefined): boolean {
-  if (agent?.avatar) return false;
-  if (agent?.look === undefined || agent.look === null) return true;
+type DefaultAgentPictureDecision = "apply" | "kept-picture" | "kept-chosen-look";
+
+function defaultAgentPictureDecision(agent: Record<string, unknown> | undefined): DefaultAgentPictureDecision {
+  if (agent?.avatar) return "kept-picture";
+  if (agent?.look === undefined || agent.look === null) return "apply";
   const look = parseAgentLook(agent.look);
-  return look?.style === DEFAULT_AGENT_LOOK.style && look.color === DEFAULT_AGENT_LOOK.color;
+  return look?.style === DEFAULT_AGENT_LOOK.style && look.color === DEFAULT_AGENT_LOOK.color ? "apply" : "kept-chosen-look";
 }
 
 async function applyDefaultAgentLook(
@@ -355,7 +357,21 @@ async function applyDefaultAgentLook(
     await deps.records.agentIdentity.sync(input.uid, { avatarPng, look: DEFAULT_AGENT_LOOK }, { slug: input.slug });
   } catch (error) {
     logger.error("[fleet-broker] default agent look was not applied", { uid: input.uid, error });
+    return;
   }
+  logger.info("[fleet-broker] default agent picture", { uid: input.uid, decision: "applied" });
+}
+
+async function settleDefaultAgentPicture(
+  input: { uid: string; slug: string },
+  deps: { renderAvatar: RenderAvatar; records: BrokerRecords },
+): Promise<void> {
+  const decision = defaultAgentPictureDecision(await deps.records.userDocuments.agent(input.uid));
+  if (decision === "apply") {
+    await applyDefaultAgentLook(input, deps);
+    return;
+  }
+  logger.info("[fleet-broker] default agent picture", { uid: input.uid, decision });
 }
 
 async function serviceMattermostUpdate(
@@ -3186,10 +3202,7 @@ function installProvisioningRoutes(
     }
     await runBrokered(res, async () => {
       const { slug } = assigned.userRecord;
-      const agent = deps.legacyProvisioning && slug ? await records.userDocuments.agent(assigned.uid) : undefined;
-      if (deps.legacyProvisioning && slug && needsDefaultAgentPicture(agent)) {
-        await applyDefaultAgentLook({ uid: assigned.uid, slug }, deps);
-      }
+      if (deps.legacyProvisioning && slug) await settleDefaultAgentPicture({ uid: assigned.uid, slug }, deps);
       await onUserProvisioned({
         uid: assigned.uid,
         slug: assigned.userRecord.slug,

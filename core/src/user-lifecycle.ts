@@ -282,7 +282,7 @@ opts?: {
   waitForAccountHealthy: (params: { slug: string; timeoutMs: number }) => Promise<boolean>;
   projectAgentsHealthy: (snapshot: UserSnapshot) => Promise<boolean>;
 
-  reportProvisioned: (ctx: UserContext, report: { first: boolean }) => Promise<void>;
+  reportProvisioned: (ctx: Pick<UserContext, "uid" | "slug">, report: { first: boolean }) => Promise<void>;
 
   onMounted?: (slug: string) => void;
   onUnmounted?: (slug: string) => void;

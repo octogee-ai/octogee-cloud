@@ -421,6 +421,19 @@ describe("POST /internal/fleet/provisioned with the provisioning service", () =>
     expect(sync).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["applied", { name: "Octo", look: DEFAULT_AGENT_LOOK }],
+    ["kept-picture", { look: DEFAULT_AGENT_LOOK, avatar: { path: "Octo-avatar.png" } }],
+    ["kept-chosen-look", { look: { style: "blob", color: "#0ea5e9" } }],
+  ])("logs the default agent picture decision %s", async (decision, agentDocument) => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { app } = fixture({ mattermostUserId: "mm-alice", agentDocument });
+
+    await post(app, "provisioned", { first: false }).expect(204);
+
+    expect(logged).toHaveBeenCalledWith("[fleet-broker] default agent picture", { uid: "uid-alice", decision });
+  });
+
   it("applies no look here without a provisioning service", async () => {
     const { app, sync } = fixture({ provisioning: null, mattermostUserId: "mm-alice" });
 

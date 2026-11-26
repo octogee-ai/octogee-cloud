@@ -711,6 +711,20 @@ export function createSchedulerReadyHandler(deps: MigrationHandlerDeps): Request
   });
 }
 
+async function reportResumedTargetProvisioned(
+  adapter: UserLifecycleAdapter,
+  slug: string,
+  log: typeof provisionerLog,
+): Promise<void> {
+  try {
+    const uid = await adapter.uidForSlug(slug);
+    if (!uid) throw new Error("no user is assigned to this slug");
+    await adapter.reportProvisioned({ uid, slug }, { first: false });
+  } catch (error) {
+    log(`[migration-http] provisioned report failed slug=${slug}: ${error instanceof Error ? error.message : String(error)}`, { status: "failed" });
+  }
+}
+
 export function createResumeHandler(deps: MigrationHandlerDeps): RequestHandler {
   const log = deps.log ?? provisionerLog;
   return (req, res) => withLogContext({}, async () => {
@@ -719,6 +733,7 @@ export function createResumeHandler(deps: MigrationHandlerDeps): RequestHandler 
     try {
       await ensureMigrationGiteaKey(deps, body.slug, "source-resume");
       await deps.adapter.resumeUser(body.slug, { migrationId: body.migrationId, ...(body.role ? { role: body.role } : {}) });
+      if (body.role === "target") await reportResumedTargetProvisioned(deps.adapter, body.slug, log);
       await (deps.voiceMigration ?? updateVoiceMigration)({ slug: body.slug, operationId: body.migrationId, phase: "resume" });
       res.status(200).json({ migrationId: body.migrationId, slug: body.slug, resumed: true });
     } catch (error) {
