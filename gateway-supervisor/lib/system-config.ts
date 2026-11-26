@@ -5,6 +5,7 @@ import { runOpenClaw, type OpenClawCommand } from "./openclaw-cli.js";
 import { redactSecrets } from "@octogee/shared/types/secret-redaction";
 import { clearMountedMarker } from "./local-default-agent-wired.js";
 import { disableSystemConfigWatch, isSystemConfigRuntimeProjection } from "./system-config-watch-state.js";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import * as fs from "fs";
@@ -2041,13 +2042,42 @@ export function readAcceptedUserConfig(openclawDir: string, env: NodeJS.ProcessE
   return config;
 }
 
+export type GatewayClassPolicyCommand = (configPath: string, env: NodeJS.ProcessEnv) => Promise<void>;
+
+export function runGatewayClassPolicy(configPath: string, env: NodeJS.ProcessEnv, timeoutMs = 60_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const policy = env.GATEWAY_CLASS_POLICY_PATH ?? "/octogee/gateway/apply-gateway-class-policy.mjs";
+    execFile(process.execPath, [policy], { env: { ...env, OPENCLAW_CONFIG_PATH: configPath }, timeout: timeoutMs }, (error, _stdout, stderr) => {
+      if (!error) return resolve();
+      const detail = redactSecrets(String(stderr).trim()).slice(0, 2000);
+      reject(new Error(`Gateway class policy failed for the isolated prelaunch config${detail ? ": " + detail : ""}`));
+    });
+  });
+}
+
+async function applyIsolatedClassPolicy(
+  openclawDir: string, config: UnknownRecord, env: NodeJS.ProcessEnv, policy: GatewayClassPolicyCommand,
+): Promise<UnknownRecord> {
+  const temporary = fs.mkdtempSync(path.join(openclawDir, ".prelaunch-policy-"));
+  try {
+    const configPath = path.join(temporary, OPENCLAW_CONFIG_FILENAME);
+    fs.writeFileSync(configPath, JSON.stringify(config), { mode: 0o600 });
+    await policy(configPath, { ...env, GATEWAY_CLASS: "isolated", OPENCLAW_DIR: openclawDir });
+    const applied = readTrackedConfigObject(fs.readFileSync(configPath, "utf8"));
+    if (!applied) throw new Error("Gateway class policy left an unreadable isolated prelaunch config");
+    return applied;
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+}
+
 export async function prepareIsolatedPrelaunchConfig(
   openclawDir: string, slug: string, env: NodeJS.ProcessEnv = process.env, run: OpenClawCommand = runOpenClaw,
+  policy: GatewayClassPolicyCommand = runGatewayClassPolicy,
 ): Promise<void> {
   await disableSystemConfigWatch(openclawDir, slug, { runtimeProjection: true });
   clearMountedMarker(path.join(openclawDir, "customers"), slug);
-  const config = readAcceptedUserConfig(openclawDir, env);
-  applyPreBootPatches(config, env, defaultLog, { stateStore: localStateStoreKind(localStateStorePath(openclawDir)) });
+  const accepted = readAcceptedUserConfig(openclawDir, env);
+  applyPreBootPatches(accepted, env, defaultLog, { stateStore: localStateStoreKind(localStateStorePath(openclawDir)) });
+  const config = await applyIsolatedClassPolicy(openclawDir, accepted, env, policy);
   const acceptedAgentIds = agentIdsFromConfig(config);
   const { id: _id, ...agent } = buildSafeDefaultAgent({ ...env, OPENCLAW_DIR: openclawDir });
   const agents = asRecord(config.agents) ?? {};
