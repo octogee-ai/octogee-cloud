@@ -35,6 +35,6 @@ describe("chat proxy voice event relay route", () => {
     });
 
     expect(response.status).toBe(202);
-    expect(await response.json()).toEqual({ accepted: true });
+    expect(await response.json()).toEqual({ accepted: true, listening: false });
   });
 });
