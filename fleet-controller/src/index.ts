@@ -2706,6 +2706,10 @@ function adminNativeReturnOptions(deps: ControllerDeps) {
   };
 }
 
+function stalledOperationObserverDeps(store: PlatformStateStore) {
+  return { store, namespace: NAMESPACE, log, intervalMs: STALLED_OPERATION_OBSERVE_MS, now: () => Date.now() };
+}
+
 function startControllerBackgroundTasks({
   addProductAdminRoutes,
   userAccounts,
@@ -2749,13 +2753,7 @@ function startControllerBackgroundTasks({
     controllerStartedAt,
     restoreStrandedSources: createStrandedSourceRetry({ store: deps.store, ...strandedSourceGateway, log, now: () => Date.now() }).start,
   });
-  const stopStalledOperationObserver = startStalledOperationObserver({
-    store: deps.store,
-    namespace: NAMESPACE,
-    log,
-    intervalMs: STALLED_OPERATION_OBSERVE_MS,
-    now: () => Date.now(),
-  });
+  const stopStalledOperationObserver = startStalledOperationObserver(stalledOperationObserverDeps(deps.store));
   const stopSchedulerHandoffRelease = startSchedulerHandoffRelease({
     store: deps.store,
     log,

@@ -101,6 +101,14 @@ describe("the 2026-11-26 shared roll stall", () => {
     expect(stall.queuedBehind.map((entry) => entry.id)).toEqual(["placement-a", "placement-b"]);
   });
 
+  it("counts a streak that fills the retained attempt history as at least that long, from the first start", () => {
+    const history = repeated(31).slice(-20);
+    const now = START + 11 * 60 * MINUTE;
+    const [stall] = findStalledOperations([returnMove(history, { attempts: 31 })], now);
+    expect(stall).toMatchObject({ consecutiveFailures: 20, consecutiveFailuresTruncated: true, attempts: 31,
+      stuckSince: START, stuckForMs: 11 * 60 * MINUTE });
+  });
+
   it("does not report a move whose failures have not yet repeated enough, or have changed", () => {
     const now = START + 22 * MINUTE;
     expect(findStalledOperations([returnMove(repeated(STALLED_OPERATION_REPEATED_FAILURES - 1))], now)).toEqual([]);
@@ -188,6 +196,17 @@ describe("stalled operation observer", () => {
     expect(renderMetrics()).toContain(
       `glm_operation_stalled{operation_id="${RETURN_ID}",kind="migrate-user",reason="repeated-failure"} 1`);
     expect(renderMetrics()).toContain(`glm_operation_stalled_queued_operations{operation_id="${RETURN_ID}"} 1`);
+  });
+
+  it("still emits the stall record when the journal write fails", async () => {
+    const store = createDocumentFixtureStore(records);
+    const logged: string[] = [];
+    await runStalledOperationObserverTick({
+      store: { ...store, transaction: async () => { throw new Error("database unavailable"); } } as typeof store,
+      namespace: "octogee", now: () => now, log: (line) => logged.push(line), emit: (record) => emitted.push(record),
+    });
+    expect(emitted).toMatchObject([{ operationId: RETURN_ID, reason: "repeated-failure", auditId: null }]);
+    expect(logged).toEqual([expect.stringContaining("database unavailable")]);
   });
 
   it("lowers the gauge once the operation finishes", async () => {

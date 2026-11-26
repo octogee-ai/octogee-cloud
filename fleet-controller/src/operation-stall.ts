@@ -3,7 +3,7 @@ import type { Operation } from "@octogee/shared/types/glm";
 import { serialFleetOperationsConflict } from "@octogee/core/fleet-operation-lock";
 import { buildOperationAuditIntent, OPERATION_AUDIT_RETENTION_MS } from "@octogee/core/operation-audit";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { MAX_OPERATION_ATTEMPTS, WAITING_FOR_ISOLATED_GATEWAY } from "./operation-retry.js";
+import { MAX_OPERATION_ATTEMPTS, MAX_OPERATION_ATTEMPT_HISTORY, WAITING_FOR_ISOLATED_GATEWAY } from "./operation-retry.js";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
 import { recordStalledOperations } from "./metrics.js";
 
@@ -33,6 +33,7 @@ export interface OperationStall {
   reason: OperationStallReason;
   repeatedError: string | null;
   consecutiveFailures: number;
+  consecutiveFailuresTruncated: boolean;
   lastError: string | null;
   attempts: number;
   firstStartedAt: number;
@@ -51,7 +52,7 @@ export interface OperationStallRecord extends Omit<OperationStall, "firstStarted
   observedAt: string;
   namespace: string;
   stuckSince: string;
-  auditId: string;
+  auditId: string | null;
 }
 
 function inputString(op: Operation, key: string): string | null {
@@ -59,7 +60,7 @@ function inputString(op: Operation, key: string): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function trailingIdenticalFailures(op: Operation): { error: string; startedAt: number; count: number } | null {
+function trailingIdenticalFailures(op: Operation & { firstStartedAt: number }): { error: string; startedAt: number; count: number; truncated: boolean } | null {
   const history = op.attemptHistory ?? [];
   const last = history.at(-1);
   if (last === undefined || last.classification !== "transient") return null;
@@ -71,7 +72,8 @@ function trailingIdenticalFailures(op: Operation): { error: string; startedAt: n
     count += 1;
     startedAt = attempt.startedAt;
   }
-  return { error: last.error, startedAt, count };
+  const truncated = count === history.length && history.length >= MAX_OPERATION_ATTEMPT_HISTORY;
+  return { error: last.error, startedAt: truncated ? Math.min(op.firstStartedAt, startedAt) : startedAt, count, truncated };
 }
 
 function queuedBehind(op: Operation, active: readonly Operation[]): QueuedBehindOperation[] {
@@ -88,34 +90,55 @@ function observedForStall(op: Operation): op is Operation & { firstStartedAt: nu
     typeof op.firstStartedAt === "number" && (op.attempts ?? 0) > 0 && op.output?.gatewayCompatibilityPending !== true;
 }
 
+function stallTarget(op: Operation): Pick<OperationStall, "uid" | "gatewayId" | "fromGatewayId" | "toGatewayId"> {
+  return {
+    uid: inputString(op, "uid"),
+    gatewayId: inputString(op, "gatewayId"),
+    fromGatewayId: inputString(op, "fromGatewayId"),
+    toGatewayId: inputString(op, "toGatewayId"),
+  };
+}
+
+function stallCause(op: Operation & { firstStartedAt: number }, behind: readonly QueuedBehindOperation[], now: number):
+  Pick<OperationStall, "reason" | "repeatedError" | "consecutiveFailures" | "consecutiveFailuresTruncated" | "stuckSince"> | null {
+  const streak = trailingIdenticalFailures(op);
+  const failures = { consecutiveFailures: streak?.count ?? 0, consecutiveFailuresTruncated: streak?.truncated ?? false };
+  if (streak !== null && streak.count >= STALLED_OPERATION_REPEATED_FAILURES) {
+    return { reason: "repeated-failure", repeatedError: streak.error, ...failures, stuckSince: streak.startedAt };
+  }
+  if (behind.length > 0 && now - op.firstStartedAt >= STALLED_OPERATION_HOLD_MS) {
+    return { reason: "holding-queue", repeatedError: null, ...failures, stuckSince: op.firstStartedAt };
+  }
+  return null;
+}
+
 export function findStalledOperations(active: readonly Operation[], now: number): OperationStall[] {
   return active.flatMap((op) => {
     if (!observedForStall(op)) return [];
-    const streak = trailingIdenticalFailures(op);
     const behind = queuedBehind(op, active);
-    const repeated = streak !== null && streak.count >= STALLED_OPERATION_REPEATED_FAILURES;
-    const holding = behind.length > 0 && now - op.firstStartedAt >= STALLED_OPERATION_HOLD_MS;
-    if (!repeated && !holding) return [];
-    const stuckSince = repeated ? streak.startedAt : op.firstStartedAt;
+    const cause = stallCause(op, behind, now);
+    if (cause === null) return [];
     return [{
       operationId: op.id,
       kind: op.kind,
       status: op.status,
-      reason: repeated ? "repeated-failure" : "holding-queue",
-      repeatedError: repeated ? streak.error : null,
-      consecutiveFailures: streak?.count ?? 0,
+      ...cause,
       lastError: op.attemptHistory?.at(-1)?.error ?? null,
       attempts: op.attempts ?? 0,
       firstStartedAt: op.firstStartedAt,
-      stuckSince,
-      stuckForMs: now - stuckSince,
+      stuckForMs: now - cause.stuckSince,
       queuedBehind: behind,
-      uid: inputString(op, "uid"),
-      gatewayId: inputString(op, "gatewayId"),
-      fromGatewayId: inputString(op, "fromGatewayId"),
-      toGatewayId: inputString(op, "toGatewayId"),
+      ...stallTarget(op),
     }];
   });
+}
+
+function stallWhy(stall: OperationStall): string {
+  if (stall.reason === "holding-queue") {
+    return `it has held ${stall.queuedBehind.length} conflicting operation(s) for over ${Math.round(STALLED_OPERATION_HOLD_MS / 60_000)} minutes`;
+  }
+  const atLeast = stall.consecutiveFailuresTruncated ? "at least " : "";
+  return `the same failure repeated ${atLeast}${stall.consecutiveFailures} times`;
 }
 
 export function operationStallAuditKey(stall: Pick<OperationStall, "operationId" | "firstStartedAt">): string {
@@ -139,9 +162,7 @@ async function journalStallOnset(deps: StalledOperationObserverDeps, stall: Oper
     actor: ACTOR,
     forced: false,
     what: "Report a fleet operation that is not making progress",
-    why: stall.reason === "repeated-failure"
-      ? `the same failure repeated ${stall.consecutiveFailures} times`
-      : `it has held ${stall.queuedBehind.length} conflicting operation(s) for over ${Math.round(STALLED_OPERATION_HOLD_MS / 60_000)} minutes`,
+    why: stallWhy(stall),
     target: { operationId: stall.operationId, kind: stall.kind, uid: stall.uid, gatewayId: stall.gatewayId,
       fromGatewayId: stall.fromGatewayId, toGatewayId: stall.toGatewayId },
     preActionStatus: { status: stall.status, attempts: stall.attempts, lastError: stall.lastError,
@@ -168,7 +189,7 @@ async function journalStallOnset(deps: StalledOperationObserverDeps, stall: Oper
   });
 }
 
-function stallRecord(stall: OperationStall, namespace: string, auditId: string, now: number): OperationStallRecord {
+function stallRecord(stall: OperationStall, namespace: string, auditId: string | null, now: number): OperationStallRecord {
   const { firstStartedAt: _firstStartedAt, stuckSince, ...rest } = stall;
   return {
     schema: OPERATION_STALL_RECORD_SCHEMA,
@@ -189,12 +210,15 @@ export async function runStalledOperationObserverTick(deps: StalledOperationObse
     operationId: stall.operationId, kind: stall.kind, reason: stall.reason, queuedOperations: stall.queuedBehind.length,
   })));
   for (const stall of stalls) {
+    let auditId: string | null;
     try {
-      const auditId = await journalStallOnset(deps, stall, now);
-      if (auditId !== null) (deps.emit ?? emitStallRecord)(stallRecord(stall, deps.namespace, auditId, now));
+      auditId = await journalStallOnset(deps, stall, now);
+      if (auditId === null) continue;
     } catch (error) {
       deps.log(`[operation-stall] ❌ ${stall.operationId} stall could not be journaled: ${error instanceof Error ? error.message : String(error)}`);
+      auditId = null;
     }
+    (deps.emit ?? emitStallRecord)(stallRecord(stall, deps.namespace, auditId, now));
   }
   return stalls;
 }
