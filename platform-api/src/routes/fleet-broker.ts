@@ -3180,7 +3180,7 @@ function installProvisioningRoutes(
     await runBrokered(res, async () => {
       const { slug } = assigned.userRecord;
       const agent = deps.legacyProvisioning && slug ? await records.userDocuments.agent(assigned.uid) : undefined;
-      if (deps.legacyProvisioning && slug && !agent?.look && !agent?.avatar) {
+      if (deps.legacyProvisioning && slug && !agent?.avatar) {
         await applyDefaultAgentLook({ uid: assigned.uid, slug }, deps);
       }
       await onUserProvisioned({
