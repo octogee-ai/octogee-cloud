@@ -212,6 +212,45 @@ selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
 
+### November 25 Mattermost channel session titles
+
+The signed overlay at `9fb9c7dcb7d60b5163b91f81df9b0e7653876e0d` adds one
+Mattermost commit to `c175f2cb700c095176c3fb73cfa0a5719327b9ea`. A channel or
+group post no longer sends `GroupChannel`, so the channel display name in
+`GroupSubject` titles the session, as slash commands, buttons and model picker
+selections already do. Native Mattermost group policy keys on the channel id,
+and core falls back from `GroupChannel` to `GroupSubject` for the remaining
+consumers. The team id still flows as `GroupSpace` and no longer prefixes the
+title. An empty display name falls back to the channel name. Existing sessions
+adopt the display name on their next post. Remove this patch once native
+Mattermost posts title sessions by display name.
+
+The Mattermost suite passed 601 of 602 tests; the slash pre-authentication
+pool case fails identically on the unpatched overlay on macOS. The extension
+and extension test typechecks passed. The full package build matched
+build-info with a clean tree, both packers ran in sequence, and the root
+archive passed the upstream integrity check. The Browser projection and routine
+catalog changed only their source SHA.
+
+The [full Linux package build and installer](https://console.cloud.google.com/cloud-build/builds;region=us-central1/de36b776-7d72-4b0b-a7ff-d142b21a63fa)
+passed with matching build-info and a clean source tree. Both packers used that
+build in sequence. The installed pair, bundled trust, and three Codex native
+hooks passed. The regenerated Browser projection matches the committed one.
+
+The [PostgreSQL qualification](https://console.cloud.google.com/cloud-build/builds;region=us-central1/99524fc1-c279-41c9-98c9-0a23388fa3ae)
+passed 24 native conformance tests. The installed pin roll began at `e9c9cd30`
+and passed on PostgreSQL 16 with pgvector. The regenerated routine catalog
+matches the committed one.
+
+The [GitHub prerelease mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-9fb9c7dcb7d6-20261125)
+uses the published object names. Readback verified each complete hash at its
+GCS generation.
+
+| Object | Generation | SHA-256 |
+| --- | --- | --- |
+| `openclaw-fork-dd35d95f.tgz` | `1795660976801717` | `dd35d95f454f8c164d9353c8d491708c98a4bb5cba732a8b703ec4a0dfc6a6bc` |
+| `openclaw-mattermost-d67bb4ed.tgz` | `1795661022960317` | `d67bb4eda578d09e471d7ead90600e0243f8f51e76e4603641348f4c364f91ea` |
+
 ### November 25 main refresh
 
 The selected OpenClaw main is `58437942943ed9107067e875dff89a5d9d155b62`.
