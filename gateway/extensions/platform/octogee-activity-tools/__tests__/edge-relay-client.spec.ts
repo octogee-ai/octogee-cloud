@@ -4,8 +4,10 @@ import {
   ACTIVITY_INGEST_PATH,
   FINAL_REPLY_RELAY_PATH,
   DIRECT_ACTIVITY_TARGET_PATH,
+  VOICE_EVENT_MAX_BYTES,
   VOICE_EVENT_RELAY_PATH,
   createEdgeRelayClient,
+  voiceAgentEvent,
 } from "../edge-relay-client.js";
 import type { AgentActivityAppend, AgentActivityEnvelopeV1 } from "../activity-types.js";
 
@@ -219,11 +221,12 @@ describe("gateway-edge relay client", () => {
   });
 
   it("uses the same authenticated local relay for heartbeats and voice events", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("", { status: 202 }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => voiceAck(false));
     const client = createEdgeRelayClient({ gatewayToken: "token", fetchImpl: fetchMock as unknown as typeof fetch, env: EDGE_ENV });
 
     await client.heartbeat("mom-coach", 10);
-    await client.publishVoice("mom-coach", { kind: "inbound", messageId: "post-1", sessionKey: "agent:mom-coach:mattermost:channel:c1", ts: 11 });
+    await expect(client.publishVoice("mom-coach", { kind: "inbound", messageId: "post-1", sessionKey: "agent:mom-coach:mattermost:channel:c1", ts: 11 }))
+      .resolves.toEqual({ listening: false });
 
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
       `${EDGE_URL}${VOICE_EVENT_RELAY_PATH}`,
@@ -235,6 +238,50 @@ describe("gateway-edge relay client", () => {
       kind: "ready",
       ts: 10,
     });
+  });
+
+  it("reports whether a Talk session is listening from the relay acknowledgement", async () => {
+    const fetchMock = vi.fn(async () => voiceAck(true));
+    const client = createEdgeRelayClient({ gatewayToken: "token", fetchImpl: fetchMock as unknown as typeof fetch, env: EDGE_ENV });
+
+    await expect(client.publishVoice("mom-coach", { kind: "agent", runId: "run", stream: "lifecycle", ts: 1, data: { phase: "start" } }))
+      .resolves.toEqual({ listening: true });
+  });
+
+  it("rejects a voice acknowledgement that does not say whether a Talk session is listening", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+    const client = createEdgeRelayClient({ gatewayToken: "token", fetchImpl: fetchMock as unknown as typeof fetch, env: EDGE_ENV });
+
+    await expect(client.publishVoice("mom-coach", { kind: "agent", runId: "run", stream: "lifecycle", ts: 1, data: { phase: "start" } }))
+      .rejects.toThrow("voice relay returned a malformed acknowledgement");
+  });
+
+  it("refuses a voice event over the relay limit without sending it", async () => {
+    const fetchMock = vi.fn(async () => voiceAck(true));
+    const client = createEdgeRelayClient({ gatewayToken: "token", fetchImpl: fetchMock as unknown as typeof fetch, env: EDGE_ENV });
+
+    await expect(client.publishVoice("mom-coach", {
+      kind: "agent",
+      runId: "run",
+      stream: "assistant",
+      ts: 1,
+      data: { text: "x".repeat(VOICE_EVENT_MAX_BYTES) },
+    })).rejects.toThrow(/exceeds the 32768-byte voice relay limit/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("projects agent events onto the lifecycle phase and assistant text a Talk session reads", () => {
+    const base = { runId: "run", seq: 1, ts: 4, sessionKey: "agent:mom-coach:main" };
+
+    expect(voiceAgentEvent({ ...base, stream: "lifecycle", data: { phase: "end", endedAt: 9, usage: { input: 1 } } }))
+      .toEqual({ kind: "agent", runId: "run", stream: "lifecycle", ts: 4, sessionKey: "agent:mom-coach:main", data: { phase: "end" } });
+    expect(voiceAgentEvent({ ...base, stream: "assistant", data: { itemId: "i", text: "Hello", delta: "lo" } })?.data)
+      .toEqual({ delta: "lo" });
+    expect(voiceAgentEvent({ ...base, stream: "assistant", data: { text: "Hello", delta: "", replace: true } })?.data)
+      .toEqual({ text: "Hello" });
+    expect(voiceAgentEvent({ ...base, stream: "assistant", data: { delta: "" } })).toBeNull();
+    expect(voiceAgentEvent({ ...base, stream: "lifecycle", data: {} })).toBeNull();
+    expect(voiceAgentEvent({ ...base, stream: "tool", data: { phase: "result", result: "x".repeat(100_000) } })).toBeNull();
   });
 
   it.each([
@@ -267,3 +314,7 @@ describe("gateway-edge relay client", () => {
   });
 
 });
+
+function voiceAck(listening: boolean): Response {
+  return new Response(JSON.stringify({ accepted: true, listening }), { status: 202 });
+}

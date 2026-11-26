@@ -37,6 +37,42 @@ export interface VoiceAgentEvent {
 
 export type VoiceEvent = VoiceInboundEvent | VoiceAgentEvent;
 
+export interface VoiceRelayAcknowledgement {
+  listening: boolean;
+}
+
+export const VOICE_EVENT_MAX_BYTES = 32 * 1024;
+
+function voiceAgentEventData(event: SourceAgentEvent): Record<string, unknown> | null {
+  const { data } = event;
+  if (event.stream === "lifecycle") return typeof data.phase === "string" ? { phase: data.phase } : null;
+  if (event.stream !== "assistant") return null;
+  if (typeof data.delta === "string" && data.delta) return { delta: data.delta };
+  return typeof data.text === "string" && data.text ? { text: data.text } : null;
+}
+
+export function voiceAgentEvent(event: SourceAgentEvent): VoiceAgentEvent | null {
+  const data = voiceAgentEventData(event);
+  if (!data) return null;
+  return {
+    kind: "agent",
+    runId: event.runId,
+    stream: event.stream,
+    ts: event.ts ?? Date.now(),
+    ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
+    data,
+  };
+}
+
+async function voiceAcknowledgement(response: Response): Promise<VoiceRelayAcknowledgement> {
+  const value = await response.json().catch(() => null) as unknown;
+  const listening = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>).listening
+    : undefined;
+  if (typeof listening !== "boolean") throw new Error("voice relay returned a malformed acknowledgement");
+  return { listening };
+}
+
 function retryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
@@ -160,15 +196,16 @@ export function createEdgeRelayClient(params: {
   const gatewayToken = configuredGatewayToken(params.gatewayToken, env);
   const fetchImpl = params.fetchImpl ?? fetch;
 
-  const post = async (path: string, body: unknown): Promise<Response> => fetchImpl(`${edgeUrl}${path}`, {
+  const postJson = async (path: string, body: string): Promise<Response> => fetchImpl(`${edgeUrl}${path}`, {
     method: "POST",
     redirect: "error",
     headers: {
       authorization: `Bearer ${gatewayToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(body),
+    body,
   });
+  const post = async (path: string, body: unknown): Promise<Response> => postJson(path, JSON.stringify(body));
 
   return {
     async resolveDirectActivityTarget(
@@ -217,23 +254,19 @@ export function createEdgeRelayClient(params: {
       const response = await post(FINAL_REPLY_RELAY_PATH, input);
       if (!response.ok) throw new Error(`reply relay returned ${response.status}`);
     },
-    async publishVoice(agentId: string, event: VoiceEvent): Promise<void> {
-      const response = await post(VOICE_EVENT_RELAY_PATH, { schemaVersion: 1, agentId, event });
+    async publishVoice(agentId: string, event: VoiceEvent): Promise<VoiceRelayAcknowledgement> {
+      const body = JSON.stringify({ schemaVersion: 1, agentId, event });
+      const bytes = Buffer.byteLength(body);
+      if (bytes > VOICE_EVENT_MAX_BYTES) {
+        throw new Error(`voice event of ${bytes} bytes exceeds the ${VOICE_EVENT_MAX_BYTES}-byte voice relay limit`);
+      }
+      const response = await postJson(VOICE_EVENT_RELAY_PATH, body);
       if (!response.ok) throw new Error(`voice relay returned ${response.status}`);
+      return voiceAcknowledgement(response);
     },
     async heartbeat(agentId: string, ts: number): Promise<void> {
       const response = await post(VOICE_EVENT_RELAY_PATH, { schemaVersion: 1, agentId, kind: "ready", ts });
       if (!response.ok) throw new Error(`voice relay returned ${response.status}`);
-    },
-    voiceAgentEvent(event: SourceAgentEvent): VoiceAgentEvent {
-      return {
-        kind: "agent",
-        runId: event.runId,
-        stream: event.stream,
-        ts: event.ts ?? Date.now(),
-        ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
-        data: event.data,
-      };
     },
   };
 }

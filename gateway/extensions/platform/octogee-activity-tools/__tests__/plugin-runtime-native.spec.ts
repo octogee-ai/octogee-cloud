@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { configuredAgentIds, registerActivityPlugin } from "../plugin-runtime-native.js";
 import type { SourceAgentEvent } from "../activity-types.js";
+import type { VoiceEvent } from "../edge-relay-client.js";
 
 function setupRuntime(
   config: unknown = { agents: { list: [{ id: "coach-1" }] } },
@@ -10,16 +11,8 @@ function setupRuntime(
   let service: { start(): Promise<void> | void; stop?(): Promise<void> | void } | undefined;
   let listener: ((event: SourceAgentEvent) => void) | undefined;
   const relay = {
-    publishVoice: vi.fn(async () => undefined),
+    publishVoice: vi.fn(async (_agentId: string, _event: VoiceEvent): Promise<{ listening: boolean }> => ({ listening: true })),
     heartbeat: vi.fn(async (_agentId: string, _ts: number) => undefined),
-    voiceAgentEvent: (event: SourceAgentEvent) => ({
-      kind: "agent" as const,
-      runId: event.runId,
-      stream: event.stream,
-      ts: event.ts ?? 0,
-      ...(event.sessionKey ? { sessionKey: event.sessionKey } : {}),
-      data: event.data,
-    }),
   };
   const api = {
     config,
@@ -133,9 +126,8 @@ describe("native OpenClaw Voice relay", () => {
 
   it("takes the relay origin only from the platform environment", () => {
     const relay = {
-      publishVoice: vi.fn(async () => undefined),
+      publishVoice: vi.fn(async () => ({ listening: false })),
       heartbeat: vi.fn(async () => undefined),
-      voiceAgentEvent: vi.fn(),
     };
     const createRelay = vi.fn((_params: {
       gatewayToken: string;
@@ -165,9 +157,8 @@ describe("native OpenClaw Voice relay", () => {
 
   it("relays with the pod relay credential when the OpenClaw process holds no gateway token", () => {
     const relay = {
-      publishVoice: vi.fn(async () => undefined),
+      publishVoice: vi.fn(async () => ({ listening: false })),
       heartbeat: vi.fn(async () => undefined),
-      voiceAgentEvent: vi.fn(),
     };
     const createRelay = vi.fn((_params: {
       gatewayToken: string;
@@ -193,13 +184,116 @@ describe("native OpenClaw Voice relay", () => {
     expect(createRelay).toHaveBeenCalledWith({ gatewayToken: "relay-token", env });
   });
 
-  it("keeps Voice events and stops listening when the service stops", async () => {
+  it("stops relaying when the service stops", async () => {
     const runtime = setupRuntime();
     await runtime.start();
-    const event = { agentId: 'coach-1', runId: 'run', seq: 1, stream: 'tool', ts: 1, sessionKey: 'agent:coach-1:main', data: { phase: 'start' } };
-    runtime.emit(event);
-    expect(runtime.relay.publishVoice).toHaveBeenCalledWith('coach-1', runtime.relay.voiceAgentEvent(event));
-    await runtime.stop(); runtime.relay.publishVoice.mockClear(); runtime.emit(event);
+    runtime.emit(lifecycle("run", "start"));
+    expect(runtime.relay.publishVoice).toHaveBeenCalledTimes(1);
+    await runtime.stop();
+    runtime.relay.publishVoice.mockClear();
+    runtime.emit(lifecycle("run-2", "start"));
     expect(runtime.relay.publishVoice).not.toHaveBeenCalled();
   });
+
+  it("relays only the run start when no Talk session is listening", async () => {
+    const runtime = setupRuntime();
+    runtime.relay.publishVoice.mockResolvedValue({ listening: false });
+    await runtime.start();
+
+    runtime.emit(lifecycle("run", "start"));
+    runtime.emit(assistant("run", { text: "Hello", delta: "Hello" }));
+    runtime.emit(event("run", "tool", { phase: "result", name: "browser", result: "x".repeat(200_000) }));
+    runtime.emit(lifecycle("run", "end"));
+    await flush();
+
+    expect(relayedEvents(runtime)).toEqual([
+      { kind: "agent", runId: "run", stream: "lifecycle", ts: 1, sessionKey: SESSION, data: { phase: "start" } },
+    ]);
+  });
+
+  it("relays a listened run's lifecycle and assistant text in order, never its tool results", async () => {
+    const runtime = setupRuntime();
+    let acknowledgeStart: ((ack: { listening: boolean }) => void) | undefined;
+    runtime.relay.publishVoice.mockImplementationOnce(() => new Promise((resolve) => { acknowledgeStart = resolve; }));
+    await runtime.start();
+
+    runtime.emit(lifecycle("run", "start"));
+    runtime.emit(assistant("run", { text: "Hel", delta: "Hel", itemId: "item-1" }));
+    runtime.emit(event("run", "tool", { phase: "result", name: "browser", result: "x".repeat(200_000) }));
+    runtime.emit(assistant("run", { text: "Hello", delta: "", replace: true }));
+    runtime.emit(lifecycle("run", "end", { endedAt: 5, usage: { input: 1 } }));
+    await flush();
+    expect(runtime.relay.publishVoice).toHaveBeenCalledTimes(1);
+
+    acknowledgeStart?.({ listening: true });
+    await flush();
+
+    expect(relayedEvents(runtime).map((relayed) => relayed.kind === "agent" ? [relayed.stream, relayed.data] : null)).toEqual([
+      ["lifecycle", { phase: "start" }],
+      ["assistant", { delta: "Hel" }],
+      ["assistant", { text: "Hello" }],
+      ["lifecycle", { phase: "end" }],
+    ]);
+  });
+
+  it("logs a failed run-start relay and relays nothing more for that run", async () => {
+    const runtime = setupRuntime();
+    runtime.relay.publishVoice.mockRejectedValueOnce(new Error("voice relay returned 413"));
+    await runtime.start();
+
+    runtime.emit(lifecycle("run", "start"));
+    runtime.emit(assistant("run", { delta: "Hi" }));
+    await flush();
+
+    expect(runtime.relay.publishVoice).toHaveBeenCalledTimes(1);
+    expect(runtime.api.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("voice agent event relay failed"),
+    );
+    expect(runtime.api.logger.error).toHaveBeenCalledWith(expect.stringContaining("voice relay returned 413"));
+  });
+
+  it("relays nothing for a run whose start it never saw", async () => {
+    const runtime = setupRuntime();
+    await runtime.start();
+
+    runtime.emit(assistant("run", { delta: "Hi" }));
+    runtime.emit(lifecycle("run", "end"));
+    await flush();
+
+    expect(runtime.relay.publishVoice).not.toHaveBeenCalled();
+  });
+
+  it("heartbeats a newly seen agent once rather than on every event", async () => {
+    const runtime = setupRuntime({ agents: { list: [] } });
+    await runtime.start();
+
+    runtime.emit(lifecycle("run", "start"));
+    runtime.emit(assistant("run", { delta: "a" }));
+    runtime.emit(assistant("run", { delta: "b" }));
+    await flush();
+
+    expect(runtime.relay.heartbeat.mock.calls.map(([agentId]) => agentId)).toEqual(["coach-1"]);
+  });
 });
+
+const SESSION = "agent:coach-1:main";
+
+function event(runId: string, stream: string, data: Record<string, unknown>): SourceAgentEvent {
+  return { agentId: "coach-1", runId, seq: 1, stream, ts: 1, sessionKey: SESSION, data };
+}
+
+function lifecycle(runId: string, phase: string, extra: Record<string, unknown> = {}): SourceAgentEvent {
+  return event(runId, "lifecycle", { phase, ...extra });
+}
+
+function assistant(runId: string, data: Record<string, unknown>): SourceAgentEvent {
+  return event(runId, "assistant", data);
+}
+
+function relayedEvents(runtime: ReturnType<typeof setupRuntime>): VoiceEvent[] {
+  return runtime.relay.publishVoice.mock.calls.map(([, relayed]) => relayed);
+}
+
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
