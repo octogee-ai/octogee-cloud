@@ -1150,6 +1150,30 @@ export interface Operation {
   schedulerHandoffReleasedAt?: number;
   schedulerHandoffLost?: string;
   cutoverCommittedAt?: number;
+  stallPark?: OperationStallPark;
+}
+
+export type OperationStallReason = "repeated-failure" | "holding-queue";
+
+export interface OperationStallPark {
+  parkedAt: number;
+  reason: OperationStallReason;
+  repeatedError: string | null;
+  lastError: string | null;
+  attempts: number;
+  consecutiveFailures: number;
+  stuckSince: number;
+  stalledSince: number;
+  queuedBehind: string[];
+  auditId: string;
+  resumedAt?: number;
+  resumedBy?: string;
+  resumeReason?: string;
+  resumeAuditId?: string;
+}
+
+export function isOperationStallParked(op: { stallPark?: OperationStallPark | null }): boolean {
+  return op.stallPark != null && op.stallPark.resumedAt === undefined;
 }
 
 export type UserMigrationV2Phase =

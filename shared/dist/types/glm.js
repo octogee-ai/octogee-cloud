@@ -503,6 +503,9 @@ export function readSchedulerMigrationIdentity(operationId, migrationId) {
         return null;
     return { attempt, claimStartedAt };
 }
+export function isOperationStallParked(op) {
+    return op.stallPark != null && op.stallPark.resumedAt === undefined;
+}
 export const GLM_GATEWAYS_COLLECTION = "glmGateways";
 export const GLM_OPERATIONS_COLLECTION = "glmOperations";
 export const GLM_MIGRATION_TRANSFER_TASKS_COLLECTION = "glmMigrationTransferTasks";

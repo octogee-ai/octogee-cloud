@@ -567,7 +567,28 @@ export interface Operation {
     schedulerHandoffReleasedAt?: number;
     schedulerHandoffLost?: string;
     cutoverCommittedAt?: number;
+    stallPark?: OperationStallPark;
 }
+export type OperationStallReason = "repeated-failure" | "holding-queue";
+export interface OperationStallPark {
+    parkedAt: number;
+    reason: OperationStallReason;
+    repeatedError: string | null;
+    lastError: string | null;
+    attempts: number;
+    consecutiveFailures: number;
+    stuckSince: number;
+    stalledSince: number;
+    queuedBehind: string[];
+    auditId: string;
+    resumedAt?: number;
+    resumedBy?: string;
+    resumeReason?: string;
+    resumeAuditId?: string;
+}
+export declare function isOperationStallParked(op: {
+    stallPark?: OperationStallPark | null;
+}): boolean;
 export type UserMigrationV2Phase = "initialized" | "keysSynced" | "preSynced" | "sourceQuiesced" | "finalSynced" | "targetVerified" | "cutover" | "sourceRetired" | "complete" | "abortIntent" | "abortTargetUnmounted" | "aborted";
 export interface UserMigrationV2GatewayRootFence {
     gatewayId: string;

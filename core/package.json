@@ -133,6 +133,10 @@
       "types": "./dist/operation-audit.d.ts",
       "default": "./dist/operation-audit.js"
     },
+    "./operation-stall-park": {
+      "types": "./dist/operation-stall-park.d.ts",
+      "default": "./dist/operation-stall-park.js"
+    },
     "./admin-shape": {
       "types": "./dist/admin-shape.d.ts",
       "default": "./dist/admin-shape.js"
@@ -1058,6 +1062,9 @@
       ],
       "operation-audit": [
         "dist/operation-audit.d.ts"
+      ],
+      "operation-stall-park": [
+        "dist/operation-stall-park.d.ts"
       ],
       "admin-shape": [
         "dist/admin-shape.d.ts"

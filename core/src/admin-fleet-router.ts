@@ -176,6 +176,12 @@ import type { FleetRegistryRecord } from "./platform-state/fleet-registry.js";
 import { readReleaseStatus, summarizeReleaseStatus } from "./release-status.js";
 import type { GatewayAssignment, GatewayRoot } from "./platform-state/gateways.js";
 import type { NewOperation, OperationRecord } from "./platform-state/operations.js";
+import {
+  assertResumableParkedOperation,
+  ParkedOperationResumeRefused,
+  parkedOperationViews,
+  resumeParkedOperationInTransaction,
+} from "./operation-stall-park.js";
 import type { OpaqueMap, PlatformStateStore, PlatformStateTransaction, Stored, UntypedRecord } from "./platform-state/store.js";
 import {
   type CentralReleaseAuthority,
@@ -5746,6 +5752,43 @@ router.post(
       res.status(202).json({ ...result, dryRun });
     } catch (error) {
       if (error instanceof HeldNativeReturnConflict) { res.status(409).json({ error: error.message }); return; }
+      next(error);
+    }
+  });
+
+  router.get("/operations/parked", async (_req, res, next) => {
+    try {
+      const active = await store.journal.operations.listByStatus(["pending", "running"]);
+      const now = Date.now();
+      res.json({ operations: parkedOperationViews(active, now), generatedAt: new Date(now).toISOString() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/operations/:id/resume-parked", async (req, res, next) => {
+    try {
+      const operationId = req.params.id as string;
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (reason.length === 0) { res.status(400).json({ error: "a reason is required to resume a parked operation" }); return; }
+      const actor = (req as ActorRequest).uid;
+      if (!actor) { res.status(403).json({ error: "Authenticated operator identity is required" }); return; }
+      const park = assertResumableParkedOperation(await store.journal.operations.get(operationId), operationId);
+      const resumed = await runAdminFleetMutation({
+        req, what: "resume a parked operation", why: reason,
+        target: { operationId }, preActionStatus: { park },
+        mutation: { kind: "resume-parked-operation", operationId, parkedAt: park.parkedAt },
+        idempotencyScope: `resume-parked-operation:${operationId}:${park.parkedAt}`,
+        action: (claim) => store.transaction({ label: "admin-resume-parked-operation" }, (tx) =>
+          resumeParkedOperationInTransaction(tx, {
+            operationId, parkedAt: park.parkedAt, actor, reason, auditId: claim.auditId, now: Date.now(),
+          })),
+      });
+      res.status(202).json({ operationId, park: resumed });
+    } catch (error) {
+      if (error instanceof ParkedOperationResumeRefused) {
+        res.status(/does not exist/.test(error.message) ? 404 : 409).json({ error: error.message }); return;
+      }
       next(error);
     }
   });

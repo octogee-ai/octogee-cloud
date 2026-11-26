@@ -56,6 +56,7 @@ import {
   isGatewayClass,
   isGatewayProfile,
   isGatewayVmImageObservation,
+  isOperationStallParked,
   type GatewayClass,
   type HelmInstancesMap,
   type OperationAuditRecord,
@@ -2205,7 +2206,8 @@ async function attemptClaimOrQueueOperation(
         pendingOpsSameKind = await Promise.all(pending.filter(operation => isSeriallyExclusiveKind(operation.kind))
           .map(async (pendingOperation) => ({
             heldForSharedDeparture: heldForDeparture.has(pendingOperation.id),
-            sharedDestinationReleased: usesOnlySharedDestinationWhileBackingOff(freshOperation, pendingOperation, Date.now()) &&
+            sharedDestinationReleased: !isOperationStallParked(pendingOperation) &&
+              usesOnlySharedDestinationWhileBackingOff(freshOperation, pendingOperation, Date.now()) &&
               await queuedSharedMigrationNeverTouchedDestinationInStore(tx, pendingOperation, pendingOperation.id),
             id: pendingOperation.id,
             kind: pendingOperation.kind,
@@ -2218,7 +2220,7 @@ async function attemptClaimOrQueueOperation(
             schedulerHandoff: pendingOperation.schedulerHandoff,
             createdAt: pendingOperation.createdAt,
             queuedAt: pendingOperation.queuedAt,
-            nextAttemptAt: pendingOperation.nextAttemptAt,
+            nextAttemptAt: isOperationStallParked(pendingOperation) ? null : pendingOperation.nextAttemptAt,
             userMigrationV2: pendingOperation.userMigrationV2,
             cutoverCommittedAt: pendingOperation.cutoverCommittedAt,
           })));
@@ -2239,6 +2241,7 @@ async function attemptClaimOrQueueOperation(
           createdAt: freshOperation.createdAt,
           queuedAt: freshOperation.queuedAt,
           nextAttemptAt: freshOperation.nextAttemptAt,
+          stallPark: freshOperation.stallPark,
           input: freshOperation.input,
           schedulerHandoff: freshOperation.schedulerHandoff,
           userMigrationV2: freshOperation.userMigrationV2,

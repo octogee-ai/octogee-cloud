@@ -1,6 +1,6 @@
 import { hasUserActivationTargetRollback } from './user-activation-roll-recovery.js';
 import { isUserActivateOperationIdFor, isUserReturnOperationIdFor } from "@octogee/shared/types/isolated-operation-ids";
-import { readSchedulerMigrationIdentity, type Operation } from "@octogee/shared/types/glm";
+import { isOperationStallParked, readSchedulerMigrationIdentity, type Operation, type OperationStallPark } from "@octogee/shared/types/glm";
 import { fleetOperationLockResources, serialFleetOperationsConflict, type RolloutLane } from "@octogee/core/fleet-operation-lock";
 import { PARKED_PREWARM_KIND } from "@octogee/core/isolated-gateway-lifecycle";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
@@ -116,6 +116,7 @@ export interface OperationClaimCandidate extends OperationRef {
   createdAt: number;
   queuedAt?: number;
   nextAttemptAt?: number | null;
+  stallPark?: OperationStallPark | null;
 }
 
 export interface OperationClaimDecisionInput {
@@ -382,7 +383,7 @@ export function decideOperationClaim(
   input: OperationClaimDecisionInput,
 ): OperationClaimDecision {
   const { op, now, runningOpsSameKind } = input;
-  if (op.status !== "pending") return { outcome: "skip" };
+  if (op.status !== "pending" || isOperationStallParked(op)) return { outcome: "skip" };
   if (typeof op.nextAttemptAt === "number" && op.nextAttemptAt > now) {
     return { outcome: "skip" };
   }

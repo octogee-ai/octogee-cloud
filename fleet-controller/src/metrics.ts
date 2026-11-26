@@ -49,6 +49,7 @@ export interface StalledOperationSample {
   operationId: string;
   kind: string;
   reason: string;
+  state: "retrying" | "parked";
   queuedOperations: number;
 }
 
@@ -168,10 +169,10 @@ export function recordStalledOperations(samples: readonly StalledOperationSample
 
 function stalledOperationLines(): string[] {
   return [
-    "# HELP glm_operation_stalled Fleet operation that has stopped making progress; 1 while it stays stalled.",
+    "# HELP glm_operation_stalled Fleet operation that has stopped making progress; state is parked once it stops retrying until an operator resumes it.",
     "# TYPE glm_operation_stalled gauge",
     ...stalledOperations.map((sample) =>
-      `glm_operation_stalled{operation_id="${escapeLabel(sample.operationId)}",kind="${escapeLabel(sample.kind)}",reason="${escapeLabel(sample.reason)}"} 1`),
+      `glm_operation_stalled{operation_id="${escapeLabel(sample.operationId)}",kind="${escapeLabel(sample.kind)}",reason="${escapeLabel(sample.reason)}",state="${sample.state}"} 1`),
     "# HELP glm_operation_stalled_queued_operations Conflicting operations queued behind each stalled fleet operation.",
     "# TYPE glm_operation_stalled_queued_operations gauge",
     ...stalledOperations.map((sample) =>

@@ -1415,6 +1415,11 @@ ALTER TABLE users ADD COLUMN workspace_checkpoint jsonb
   CHECK (workspace_checkpoint IS NULL OR jsonb_typeof(workspace_checkpoint) = 'object');
 `;
 
+const OPERATION_STALL_PARK = `
+ALTER TABLE operations
+  ADD COLUMN stall_park jsonb CHECK (stall_park IS NULL OR jsonb_typeof(stall_park) = 'object');
+`;
+
 export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 1, name: "core-schema", sql: CORE_SCHEMA },
   { version: 2, name: "change-feed", sql: CHANGE_FEED },
@@ -1442,4 +1447,5 @@ export const PLATFORM_STATE_MIGRATIONS: readonly PlatformStateMigration[] = [
   { version: 24, name: "ephemeral-gateway-home", sql: EPHEMERAL_GATEWAY_HOME },
   { version: 25, name: "native-scheduler-export", sql: NATIVE_SCHEDULER_EXPORT },
   { version: 26, name: "ephemeral-gateway-recovery-state", sql: EPHEMERAL_GATEWAY_RECOVERY_STATE },
+  { version: 27, name: "operation-stall-park", sql: OPERATION_STALL_PARK },
 ];
