@@ -15,6 +15,7 @@ export interface GatewayControlListEntry {
   imageTag?: string;
   controlUiEnabled: boolean;
   controlUiReady: boolean;
+  hasDesktop: boolean;
   isCurrentAssignment: boolean;
   configStatus?: GatewayConfigStatus;
   via: GatewayAccessRole;

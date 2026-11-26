@@ -25,7 +25,9 @@ import {
   isValidGatewayId,
   resolveGatewayClass,
   resolveGatewayImageProfile,
+  resolveGatewayRuntime,
 } from "@octogee/shared/types/glm";
+import { isGatewayRuntimeDoc } from "@octogee/shared/types/gateway-releases";
 import {
   readGatewayArtifactInStore,
   readGatewayAuthorizationInStore,
@@ -62,6 +64,11 @@ const openClawTicketRateLimit = rateLimit({
   keyGenerator: (req: Request) => `${req.uid}:${req.params.gatewayId}`,
   message: { error: "ticket-rate-limited", retryable: true },
 });
+
+function runsOnVm(runtime: unknown, gatewayId: string): boolean {
+  return isGatewayRuntimeDoc(runtime) && runtime.gatewayId === gatewayId &&
+    "runtime" in runtime && resolveGatewayRuntime(runtime.runtime) === "gce-vm";
+}
 
 async function userViewOf({
   authorization,
@@ -113,6 +120,7 @@ async function userViewOf({
       controlUiEnabled,
       isCurrentAssignment,
     }),
+    hasDesktop: runsOnVm(runtime, gateway.gatewayId),
     isCurrentAssignment,
     ...(configStatus ? { configStatus } : {}),
     via: accessRole(access),
