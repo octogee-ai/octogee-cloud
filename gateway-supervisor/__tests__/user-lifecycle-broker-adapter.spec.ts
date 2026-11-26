@@ -7010,6 +7010,22 @@ it("detaches one user's agent while another user's runtime publication settles",
   });
 });
 
+it("releases a migrating user's agent ahead of an add that was already waiting", async () => {
+  await withPostgresAgentConfig({}, async () => {
+    let finishRunning!: () => void;
+    const hold = new Promise<void>((resolve) => { finishRunning = resolve; });
+    const running = openClawRuntimeUpdateGuard.tryRun(() => hold)!;
+    const order: string[] = [];
+    const rpc = mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }) => { order.push("release"); return { ok: true, agentId }; }) });
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });
+    const add = openClawRuntimeUpdateGuard.run(async () => { order.push("add"); }, { slug: "carol", label: "add:carol" });
+    const released = adapter.releaseAgent!("alice", "octogee-alice-coach");
+    finishRunning();
+    await Promise.all([running, add, released]);
+    expect(order).toEqual(["release", "add"]);
+  });
+});
+
 it("refuses to release an agent under another user's runtime scope", async () => {
   const rpc = mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })) });
   const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });

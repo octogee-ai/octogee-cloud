@@ -317,7 +317,7 @@ async function exportSourceActivationManifest(ctx: BrokerCtx, slug: string,
       }
       options.signal?.throwIfAborted();
       return exportActivationManifestWithSecret(OPENCLAW_CONFIG, OPENCLAW_DIR, slug);
-    }, { signal: options.signal, timeoutMs: remaining, slug, label: `export-manifest:${slug}` });
+    }, { signal: options.signal, timeoutMs: remaining, slug, label: `export-manifest:${slug}`, priority: "migration" });
     if (manifest) return manifest;
     if (!waiting) ctx.log(`[migration-activation:${slug}] waiting for source runtime configuration to converge`);
     waiting = true;
@@ -2777,28 +2777,29 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
       });
       if (manifest) await activateImportedUser(ctx, slug, { resumeExistingSharedCustody: true, migrationId: resumeOptions?.migrationId });
       await setUserChannelsRunning(ctx.rpc, slug, true);
-    }, { ignorePublications: true, label: `resume:${slug}` }),
+    }, { ignorePublications: true, label: `resume:${slug}`, priority: "migration" }),
     prepareImportDir: (slug, mode) => openClawRuntimeUpdateGuard.run(() =>
-      prepareImportDir(ctx, slug, mode, agentStateRelease(ctx, `[prepare-import:${slug}]`)), { slug, label: `prepare-import:${slug}` }),
+      prepareImportDir(ctx, slug, mode, agentStateRelease(ctx, `[prepare-import:${slug}]`)), { slug, label: `prepare-import:${slug}`, priority: "migration" }),
     activateImportedUser: (slug, callOpts) =>
       openClawRuntimeUpdateGuard.run(() => activateImportedUser(ctx, slug, callOpts), {
         signal: callOpts?.signal,
         slug,
         label: `activate-import:${slug}`,
+        priority: "migration",
       }),
     removeImportedUserBySlug: (slug, evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds) =>
       openClawRuntimeUpdateGuard.run(() =>
         removeImportedUserBySlug(ctx, slug, { evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds }),
-      { slug, evicting: evictionBatch, label: `remove-import:${slug}` }),
+      { slug, evicting: evictionBatch, label: `remove-import:${slug}`, priority: "migration" }),
     releaseAgent: async (slug, agentId, signal) => {
       if (!agentIdBelongsToSlug(agentId, slug)) throw new Error(`agent ${agentId} does not belong to ${slug}`);
       await openClawRuntimeUpdateGuard.run(() => releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`),
-        { slug, ...(signal ? { signal } : {}), label: `release:${agentId}` });
+        { slug, ...(signal ? { signal } : {}), label: `release:${agentId}`, priority: "migration" });
     },
     detachSourceAgents: (slug, agentIds, signal) => openClawRuntimeUpdateGuard.run(
       () => ctx.isIsolatedGateway() ? detachBuilderSourceAgents(ctx, slug, agentIds, signal)
         : detachAgentsInBatches(ctx, slug, agentIds, () => signal.throwIfAborted()),
-      { signal, slug, label: `detach:${slug}` },
+      { signal, slug, label: `detach:${slug}`, priority: "migration" },
     ),
   };
 }
