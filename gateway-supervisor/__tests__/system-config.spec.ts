@@ -14,6 +14,7 @@ import { brokeredGitHost } from "../lib/gitea-admin-broker-client.js";
 import {
   auditSystemConfigForSlug,
   prepareIsolatedPrelaunchConfig,
+  runGatewayClassPolicy,
   checkpointDurableSystemConfigForSlug,
   readAcceptedUserConfig,
   extractLegacyMattermostAccountSecrets,
@@ -2276,5 +2277,44 @@ describe("Isolated prelaunch config", () => {
       expect(JSON.parse(fs.readFileSync(path.join(repo, "openclaw.json"), "utf8"))).toEqual(accepted);
       expect(fs.readdirSync(root).filter(name => name.startsWith(".prelaunch-"))).toEqual([]);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  describe("when the gateway class policy fails", () => {
+    const longTail = "x".repeat(3000);
+    it.each([
+      { scenario: "exits non-zero", script: `process.stderr.write("policy refused; password=example-secret ${longTail}"); process.exit(1);`,
+        timeoutMs: 10_000, message: /^Gateway class policy failed for the isolated prelaunch config: policy refused; password=\[redacted\] x+$/ },
+      { scenario: "times out", script: "setTimeout(() => {}, 60_000);",
+        timeoutMs: 200, message: /^Gateway class policy failed for the isolated prelaunch config$/ },
+      { scenario: "leaves unreadable JSON", script: `require("node:fs").writeFileSync(process.env.OPENCLAW_CONFIG_PATH, "{not json");`,
+        timeoutMs: 10_000, message: /^Gateway class policy left an unreadable isolated prelaunch config$/ },
+    ])("stops the prelaunch when the policy $scenario", async ({ script, timeoutMs, message }) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-prelaunch-policy-failure-"));
+      const scripts = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-prelaunch-policy-script-"));
+      const repo = path.join(root, "system_config");
+      fs.mkdirSync(repo);
+      const policyPath = path.join(scripts, "policy.cjs");
+      fs.writeFileSync(policyPath, script);
+      const env = withUserClaim({ OPENCLAW_DIR: root, GATEWAY_CLASS: "isolated", GATEWAY_CLASS_POLICY_PATH: policyPath,
+        API_PUBLIC_URL: "https://api.example.test" }, "alice");
+      writeJson(path.join(repo, "openclaw.json"), { agents: { entries: {} } });
+      execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["add", "openclaw.json"], { cwd: repo });
+      execFileSync("git", ["-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"], { cwd: repo });
+      const nativeWrite = vi.fn(async () => ({ code: 0, stdout: "" }));
+      try {
+        const failure = prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite,
+          (configPath, policyEnv) => runGatewayClassPolicy(configPath, policyEnv, timeoutMs));
+        await expect(failure).rejects.toThrow(message);
+        const error = await failure.catch((caught: Error) => caught);
+        expect(error.message.length).toBeLessThanOrEqual("Gateway class policy failed for the isolated prelaunch config: ".length + 2000);
+        expect(error.message).not.toContain("example-secret");
+        expect(nativeWrite).not.toHaveBeenCalled();
+        expect(fs.readdirSync(root).filter(name => name.startsWith(".prelaunch-"))).toEqual([]);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(scripts, { recursive: true, force: true });
+      }
+    });
   });
 });

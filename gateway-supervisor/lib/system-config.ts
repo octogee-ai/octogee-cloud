@@ -2044,15 +2044,16 @@ export function readAcceptedUserConfig(openclawDir: string, env: NodeJS.ProcessE
 
 export type GatewayClassPolicyCommand = (configPath: string, env: NodeJS.ProcessEnv) => Promise<void>;
 
-export const runGatewayClassPolicy: GatewayClassPolicyCommand = (configPath, env) =>
-  new Promise((resolve, reject) => {
+export function runGatewayClassPolicy(configPath: string, env: NodeJS.ProcessEnv, timeoutMs = 60_000): Promise<void> {
+  return new Promise((resolve, reject) => {
     const policy = env.GATEWAY_CLASS_POLICY_PATH ?? "/octogee/gateway/apply-gateway-class-policy.mjs";
-    execFile("node", [policy], { env: { ...env, OPENCLAW_CONFIG_PATH: configPath }, timeout: 60_000 }, (error, _stdout, stderr) => {
+    execFile(process.execPath, [policy], { env: { ...env, OPENCLAW_CONFIG_PATH: configPath }, timeout: timeoutMs }, (error, _stdout, stderr) => {
       if (!error) return resolve();
       const detail = redactSecrets(String(stderr).trim()).slice(0, 2000);
       reject(new Error(`Gateway class policy failed for the isolated prelaunch config${detail ? ": " + detail : ""}`));
     });
   });
+}
 
 async function applyIsolatedClassPolicy(
   openclawDir: string, config: UnknownRecord, env: NodeJS.ProcessEnv, policy: GatewayClassPolicyCommand,
