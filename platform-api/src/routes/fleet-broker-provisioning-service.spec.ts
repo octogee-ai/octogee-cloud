@@ -378,6 +378,18 @@ describe("POST /internal/fleet/provisioned with the provisioning service", () =>
     );
   });
 
+  it("keeps a chosen look that has no picture yet", async () => {
+    const { app, sync, renderAvatar } = fixture({
+      mattermostUserId: "mm-alice",
+      agentDocument: { look: { style: "blob", color: "#0ea5e9" } },
+    });
+
+    await post(app, "provisioned", { first: false }).expect(204);
+
+    expect(renderAvatar).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+  });
+
   it("leaves an agent that already has a picture of its look alone", async () => {
     const reports: ProvisionedUserReport[] = [];
     const { app, sync, renderAvatar } = fixture({
