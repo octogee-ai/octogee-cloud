@@ -384,6 +384,7 @@ import {
   type MirrorDelivery,
 } from "./fleet-informer.js";
 import { recoverControllerOrphanedOperations, startStuckOpReaper } from "./stuck-op-reaper.js";
+import { STALLED_OPERATION_OBSERVE_MS, startStalledOperationObserver } from "./operation-stall.js";
 import { createStrandedSourceRetry } from "./stranded-source-retry.js";
 import { claimCrashLoopEviction } from "./surge-crashloop-eviction.js";
 import { startNativeReturnHoldReaper } from "./native-return-hold-reaper.js";
@@ -2748,6 +2749,13 @@ function startControllerBackgroundTasks({
     controllerStartedAt,
     restoreStrandedSources: createStrandedSourceRetry({ store: deps.store, ...strandedSourceGateway, log, now: () => Date.now() }).start,
   });
+  const stopStalledOperationObserver = startStalledOperationObserver({
+    store: deps.store,
+    namespace: NAMESPACE,
+    log,
+    intervalMs: STALLED_OPERATION_OBSERVE_MS,
+    now: () => Date.now(),
+  });
   const stopSchedulerHandoffRelease = startSchedulerHandoffRelease({
     store: deps.store,
     log,
@@ -2889,6 +2897,7 @@ function startControllerBackgroundTasks({
     stopOperationQueueDrain,
     stopPoller,
     stopStuckOpReaper,
+    stopStalledOperationObserver,
     stopSchedulerHandoffRelease,
     stopNativeReturnHoldReaper,
     stopGiteaGatewayKeyGc,

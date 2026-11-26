@@ -124,6 +124,14 @@ spec:
           annotations:
             summary: "PROD fleet controller has no available backend pods"
             description: "The fleet controller has had no available backend pods in PROD for 1 minute. Fleet Admin requests may fail. Check node readiness, the glm-controller pod, and PostgreSQL connection errors."
+        - alert: FleetOperationStalled
+          expr: max by (namespace, operation_id, kind, reason) (glm_operation_stalled{namespace=~"__ENVIRONMENT_NAMESPACES__"}) > 0
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Fleet operation {{ $labels.operation_id }} ({{ $labels.kind }}) is not making progress"
+            description: "Reason {{ $labels.reason }}: either the same failure repeated as many times as the ordinary attempt cap allows, or a failing operation has kept conflicting operations queued behind it for over 30 minutes, and it has stayed that way for another 30 minutes. The fleet controller keeps retrying it and keeps its lock. Its 'Fleet operation stalled' log record (schema octogee.operation-stall.v1) and its operations-journal entry name the repeated error, the attempt count, how long it has been stuck and what is queued behind it. Fix the cause it names (for a target gateway that refuses an import, restart that gateway); the next retry then proceeds."
         - alert: GlmControllerReconcileStalled
           expr: (time() - glm_reconcile_last_success_timestamp_seconds{namespace=~"__ENVIRONMENT_NAMESPACES__"}) > 600
           for: 5m

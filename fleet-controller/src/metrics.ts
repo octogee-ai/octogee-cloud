@@ -13,6 +13,7 @@ const disruptionObservations = new Map<string, number>();
 let disruptionLastObservedMs: number | null = null;
 let provisioningMetrics: (() => string) | null = null;
 let placementAutomation: PlacementAutomationMetricSample | null = null;
+let stalledOperations: StalledOperationSample[] = [];
 let disruptionSnapshot = {
   spotNodes: 0,
   onDemandNodes: 0,
@@ -42,6 +43,13 @@ export interface ConfigRollSample {
   result: ConfigRollResult;
   gatewayId: string;
   revisionId: string;
+}
+
+export interface StalledOperationSample {
+  operationId: string;
+  kind: string;
+  reason: string;
+  queuedOperations: number;
 }
 
 export interface GatewayHealthSample {
@@ -97,6 +105,7 @@ export function resetMetrics(): void {
   disruptionObservations.clear();
   disruptionLastObservedMs = null;
   placementAutomation = null;
+  stalledOperations = [];
   disruptionSnapshot = {
     spotNodes: 0,
     onDemandNodes: 0,
@@ -151,6 +160,23 @@ export function recordDisruptionSnapshot(sample: DisruptionSnapshotSample): void
     pendingGatewayPods: Math.max(0, Math.trunc(sample.pendingGatewayPods)),
   };
   disruptionLastObservedMs = sample.now ?? Date.now();
+}
+
+export function recordStalledOperations(samples: readonly StalledOperationSample[]): void {
+  stalledOperations = samples.map((sample) => ({ ...sample }));
+}
+
+function stalledOperationLines(): string[] {
+  return [
+    "# HELP glm_operation_stalled Fleet operation that has stopped making progress; 1 while it stays stalled.",
+    "# TYPE glm_operation_stalled gauge",
+    ...stalledOperations.map((sample) =>
+      `glm_operation_stalled{operation_id="${escapeLabel(sample.operationId)}",kind="${escapeLabel(sample.kind)}",reason="${escapeLabel(sample.reason)}"} 1`),
+    "# HELP glm_operation_stalled_queued_operations Conflicting operations queued behind each stalled fleet operation.",
+    "# TYPE glm_operation_stalled_queued_operations gauge",
+    ...stalledOperations.map((sample) =>
+      `glm_operation_stalled_queued_operations{operation_id="${escapeLabel(sample.operationId)}"} ${sample.queuedOperations}`),
+  ];
 }
 
 export function recordPlacementAutomation(sample: PlacementAutomationMetricSample): void {
@@ -234,6 +260,7 @@ export function renderMetrics(): string {
     "# TYPE glm_disruption_pending_gateway_pods gauge",
     `glm_disruption_pending_gateway_pods ${disruptionSnapshot.pendingGatewayPods}`,
     ...placementAutomationLines(),
+    ...stalledOperationLines(),
     "",
   ].join("\n") + (provisioningMetrics?.() ?? "");
 }
