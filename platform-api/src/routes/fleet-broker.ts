@@ -339,6 +339,13 @@ const defaultRenderAvatar: RenderAvatar = async (bytes) => {
   return renderAvatarPng(bytes);
 };
 
+function needsDefaultAgentPicture(agent: Record<string, unknown> | undefined): boolean {
+  if (agent?.avatar) return false;
+  if (agent?.look === undefined || agent.look === null) return true;
+  const look = parseAgentLook(agent.look);
+  return look?.style === DEFAULT_AGENT_LOOK.style && look.color === DEFAULT_AGENT_LOOK.color;
+}
+
 async function applyDefaultAgentLook(
   input: { uid: string; slug: string },
   deps: { renderAvatar: RenderAvatar; records: BrokerRecords },
@@ -3180,7 +3187,7 @@ function installProvisioningRoutes(
     await runBrokered(res, async () => {
       const { slug } = assigned.userRecord;
       const agent = deps.legacyProvisioning && slug ? await records.userDocuments.agent(assigned.uid) : undefined;
-      if (deps.legacyProvisioning && slug && !agent?.look && !agent?.avatar) {
+      if (deps.legacyProvisioning && slug && needsDefaultAgentPicture(agent)) {
         await applyDefaultAgentLook({ uid: assigned.uid, slug }, deps);
       }
       await onUserProvisioned({

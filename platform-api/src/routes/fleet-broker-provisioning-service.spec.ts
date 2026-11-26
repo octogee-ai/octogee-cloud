@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { logger } from "@octogee/core/http/logging";
+import { DEFAULT_AGENT_LOOK } from "@octogee/shared/types/agent-characters";
 import { workspaceDefaultAgentChannelName } from "@octogee/shared/types/identity";
 import { installDefaultUserEntitlements } from "@octogee/shared/types/user-entitlements";
 import type { UserProvisioning } from "@octogee/shared/types/provisioning-service";
@@ -362,11 +363,41 @@ describe("POST /internal/fleet/provisioned with the provisioning service", () =>
     expect(order).toEqual(["look", "reported"]);
   });
 
-  it("leaves an agent that already has a look alone", async () => {
+  it("uploads the default agent picture for an agent created with the default look and no picture", async () => {
+    const { app, sync } = fixture({
+      mattermostUserId: "mm-alice",
+      agentDocument: { name: "Octo", look: DEFAULT_AGENT_LOOK },
+    });
+
+    await post(app, "provisioned", { first: true }).expect(204);
+
+    expect(sync).toHaveBeenCalledWith(
+      "uid-alice",
+      { avatarPng: Buffer.from("png"), look: DEFAULT_AGENT_LOOK },
+      { slug: "alice" },
+    );
+  });
+
+  it("keeps a chosen look that has no picture yet", async () => {
+    const { app, sync, renderAvatar } = fixture({
+      mattermostUserId: "mm-alice",
+      agentDocument: { look: { style: "blob", color: "#0ea5e9" } },
+    });
+
+    await post(app, "provisioned", { first: false }).expect(204);
+
+    expect(renderAvatar).not.toHaveBeenCalled();
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it("leaves an agent that already has a picture of its look alone", async () => {
     const reports: ProvisionedUserReport[] = [];
     const { app, sync, renderAvatar } = fixture({
       mattermostUserId: "mm-alice",
-      agentDocument: { look: { body: "custom" } },
+      agentDocument: {
+        look: { style: "blob", color: "#0ea5e9" },
+        avatar: { path: "Coach-avatar.png", gcsPath: "users/alice/Coach-avatar.png" },
+      },
       onUserProvisioned: async (report) => { reports.push(report); },
     });
 
