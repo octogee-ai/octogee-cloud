@@ -51,6 +51,7 @@ export const OPERATIONS_TABLE: TableSpec = {
     column("nativeReturnSourceRecoveryReceipts", "jsonb"),
     column("forceDrainRequest", "jsonb"),
     column("rolloutLane", "text"),
+    column("stallPark", "jsonb"),
     column("expireAt", "bigint"),
   ],
   immutableFields: ["id", "kind", "createdAt", "createdBy"],

@@ -1,9 +1,19 @@
 import { createServiceLogger } from "@octogee/shared/server/service-logger";
-import type { Operation } from "@octogee/shared/types/glm";
-import { serialFleetOperationsConflict } from "@octogee/core/fleet-operation-lock";
+import {
+  isOperationStallParked,
+  type Operation,
+  type OperationStallPark,
+  type OperationStallReason,
+} from "@octogee/shared/types/glm";
 import { buildOperationAuditIntent, OPERATION_AUDIT_RETENTION_MS } from "@octogee/core/operation-audit";
+import {
+  operationsQueuedBehind,
+  PARKED_OPERATION_WAITING_ON,
+  stallObservationStart,
+  type QueuedBehindOperation,
+} from "@octogee/core/operation-stall-park";
 import type { PlatformStateStore } from "@octogee/core/platform-state";
-import { MAX_OPERATION_ATTEMPTS, MAX_OPERATION_ATTEMPT_HISTORY, WAITING_FOR_ISOLATED_GATEWAY } from "./operation-retry.js";
+import { MAX_OPERATION_ATTEMPTS, MAX_OPERATION_ATTEMPT_HISTORY } from "./operation-retry.js";
 import { MIGRATE_USER_KIND } from "./operation-kinds.js";
 import { recordStalledOperations } from "./metrics.js";
 
@@ -15,16 +25,7 @@ export const STALLED_OPERATION_HOLD_MS = 30 * 60_000;
 export const STALLED_OPERATION_OBSERVE_MS = 60_000;
 
 const STALL_OBSERVED_KINDS: ReadonlySet<string> = new Set(["rollout", MIGRATE_USER_KIND]);
-const SELF_WAITS: ReadonlySet<string> = new Set(["builder-idle", "home-archive-provider", WAITING_FOR_ISOLATED_GATEWAY]);
 const ACTOR = "fleet-controller";
-
-export type OperationStallReason = "repeated-failure" | "holding-queue";
-
-export interface QueuedBehindOperation {
-  id: string;
-  kind: string;
-  waitingOn: string;
-}
 
 export interface OperationStall {
   operationId: string;
@@ -36,8 +37,9 @@ export interface OperationStall {
   consecutiveFailuresTruncated: boolean;
   lastError: string | null;
   attempts: number;
-  firstStartedAt: number;
+  observedSince: number;
   stuckSince: number;
+  parkedAt: number | null;
   stuckForMs: number;
   queuedBehind: QueuedBehindOperation[];
   uid: string | null;
@@ -46,12 +48,14 @@ export interface OperationStall {
   toGatewayId: string | null;
 }
 
-export interface OperationStallRecord extends Omit<OperationStall, "firstStartedAt" | "stuckSince"> {
+export interface OperationStallRecord extends Omit<OperationStall, "observedSince" | "stuckSince" | "parkedAt"> {
   schema: typeof OPERATION_STALL_RECORD_SCHEMA;
   recordType: "operation_stall";
   observedAt: string;
   namespace: string;
   stuckSince: string;
+  parked: boolean;
+  parkedAt: string | null;
   auditId: string | null;
 }
 
@@ -60,8 +64,11 @@ function inputString(op: Operation, key: string): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-function trailingIdenticalFailures(op: Operation & { firstStartedAt: number }): { error: string; startedAt: number; count: number; truncated: boolean } | null {
-  const history = op.attemptHistory ?? [];
+type ObservedOperation = Operation & { observedSince: number };
+
+function trailingIdenticalFailures(op: ObservedOperation): { error: string; startedAt: number; count: number; truncated: boolean } | null {
+  const retained = op.attemptHistory ?? [];
+  const history = retained.filter((attempt) => attempt.startedAt >= op.observedSince);
   const last = history.at(-1);
   if (last === undefined || last.classification !== "transient") return null;
   let count = 0;
@@ -72,22 +79,15 @@ function trailingIdenticalFailures(op: Operation & { firstStartedAt: number }): 
     count += 1;
     startedAt = attempt.startedAt;
   }
-  const truncated = count === history.length && history.length >= MAX_OPERATION_ATTEMPT_HISTORY;
-  return { error: last.error, startedAt: truncated ? Math.min(op.firstStartedAt, startedAt) : startedAt, count, truncated };
+  const truncated = count === retained.length && retained.length >= MAX_OPERATION_ATTEMPT_HISTORY;
+  return { error: last.error, startedAt: truncated ? Math.min(op.observedSince, startedAt) : startedAt, count, truncated };
 }
 
-function queuedBehind(op: Operation, active: readonly Operation[]): QueuedBehindOperation[] {
-  return active.flatMap((other) => {
-    const waitingOn = other.waitingOn;
-    if (other.id === op.id || other.status !== "pending" || typeof waitingOn !== "string" || waitingOn.length === 0 ||
-        SELF_WAITS.has(waitingOn) || !serialFleetOperationsConflict(op, other)) return [];
-    return [{ id: other.id, kind: other.kind, waitingOn }];
-  });
-}
-
-function observedForStall(op: Operation): op is Operation & { firstStartedAt: number } {
-  return STALL_OBSERVED_KINDS.has(op.kind) && (op.status === "pending" || op.status === "running") &&
-    typeof op.firstStartedAt === "number" && (op.attempts ?? 0) > 0 && op.output?.gatewayCompatibilityPending !== true;
+function observed(op: Operation): ObservedOperation | null {
+  const observedSince = stallObservationStart(op);
+  if (!STALL_OBSERVED_KINDS.has(op.kind) || (op.status !== "pending" && op.status !== "running") ||
+      observedSince === null || (op.attempts ?? 0) === 0 || op.output?.gatewayCompatibilityPending === true) return null;
+  return { ...op, observedSince };
 }
 
 function stallTarget(op: Operation): Pick<OperationStall, "uid" | "gatewayId" | "fromGatewayId" | "toGatewayId"> {
@@ -99,24 +99,32 @@ function stallTarget(op: Operation): Pick<OperationStall, "uid" | "gatewayId" | 
   };
 }
 
-function stallCause(op: Operation & { firstStartedAt: number }, behind: readonly QueuedBehindOperation[], now: number):
-  Pick<OperationStall, "reason" | "repeatedError" | "consecutiveFailures" | "consecutiveFailuresTruncated" | "stuckSince"> | null {
+type StallCause = Pick<OperationStall, "reason" | "repeatedError" | "consecutiveFailures" | "consecutiveFailuresTruncated" | "stuckSince">;
+
+function parkedCause(park: OperationStallPark): StallCause {
+  return { reason: park.reason, repeatedError: park.repeatedError, consecutiveFailures: park.consecutiveFailures,
+    consecutiveFailuresTruncated: false, stuckSince: park.stuckSince };
+}
+
+function stallCause(op: ObservedOperation, behind: readonly QueuedBehindOperation[], now: number): StallCause | null {
   const streak = trailingIdenticalFailures(op);
   const failures = { consecutiveFailures: streak?.count ?? 0, consecutiveFailuresTruncated: streak?.truncated ?? false };
   if (streak !== null && streak.count >= STALLED_OPERATION_REPEATED_FAILURES) {
     return { reason: "repeated-failure", repeatedError: streak.error, ...failures, stuckSince: streak.startedAt };
   }
-  if (behind.length > 0 && now - op.firstStartedAt >= STALLED_OPERATION_HOLD_MS) {
-    return { reason: "holding-queue", repeatedError: null, ...failures, stuckSince: op.firstStartedAt };
+  if (behind.length > 0 && now - op.observedSince >= STALLED_OPERATION_HOLD_MS) {
+    return { reason: "holding-queue", repeatedError: null, ...failures, stuckSince: op.observedSince };
   }
   return null;
 }
 
 export function findStalledOperations(active: readonly Operation[], now: number): OperationStall[] {
-  return active.flatMap((op) => {
-    if (!observedForStall(op)) return [];
-    const behind = queuedBehind(op, active);
-    const cause = stallCause(op, behind, now);
+  return active.flatMap((candidate) => {
+    const op = observed(candidate);
+    if (op === null) return [];
+    const behind = operationsQueuedBehind(op, active);
+    const park = isOperationStallParked(op) ? op.stallPark ?? null : null;
+    const cause = park ? parkedCause(park) : stallCause(op, behind, now);
     if (cause === null) return [];
     return [{
       operationId: op.id,
@@ -125,7 +133,8 @@ export function findStalledOperations(active: readonly Operation[], now: number)
       ...cause,
       lastError: op.attemptHistory?.at(-1)?.error ?? null,
       attempts: op.attempts ?? 0,
-      firstStartedAt: op.firstStartedAt,
+      observedSince: op.observedSince,
+      parkedAt: park?.parkedAt ?? null,
       stuckForMs: now - cause.stuckSince,
       queuedBehind: behind,
       ...stallTarget(op),
@@ -141,8 +150,8 @@ function stallWhy(stall: OperationStall): string {
   return `the same failure repeated ${atLeast}${stall.consecutiveFailures} times`;
 }
 
-export function operationStallAuditKey(stall: Pick<OperationStall, "operationId" | "firstStartedAt">): string {
-  return `operation-stalled:${stall.operationId}:${stall.firstStartedAt}`;
+export function operationParkAuditKey(stall: Pick<OperationStall, "operationId" | "observedSince">): string {
+  return `operation-parked:${stall.operationId}:${stall.observedSince}`;
 }
 
 export interface StalledOperationObserverDeps {
@@ -157,22 +166,37 @@ function emitStallRecord(record: OperationStallRecord): void {
   eventLogger.error("Fleet operation stalled", { ...record });
 }
 
-async function journalStallOnset(deps: StalledOperationObserverDeps, stall: OperationStall, now: number): Promise<string | null> {
+function parkRecord(stall: OperationStall, auditId: string, now: number): OperationStallPark {
+  return {
+    parkedAt: now, reason: stall.reason, repeatedError: stall.repeatedError, lastError: stall.lastError,
+    attempts: stall.attempts, consecutiveFailures: stall.consecutiveFailures, stuckSince: stall.stuckSince,
+    queuedBehind: stall.queuedBehind.map((queued) => queued.id), auditId,
+  };
+}
+
+async function parkStalledOperation(deps: StalledOperationObserverDeps, stall: OperationStall, now: number): Promise<string | null> {
   const audit = buildOperationAuditIntent({
     actor: ACTOR,
     forced: false,
-    what: "Report a fleet operation that is not making progress",
-    why: stallWhy(stall),
+    what: "park a fleet operation that is not making progress",
+    why: `${stallWhy(stall)}: ${stall.repeatedError ?? stall.lastError ?? "no error recorded"}`,
     target: { operationId: stall.operationId, kind: stall.kind, uid: stall.uid, gatewayId: stall.gatewayId,
       fromGatewayId: stall.fromGatewayId, toGatewayId: stall.toGatewayId },
     preActionStatus: { status: stall.status, attempts: stall.attempts, lastError: stall.lastError,
       queuedBehind: stall.queuedBehind.map((queued) => queued.id) },
-    mutation: { kind: "operation-stalled", operationId: stall.operationId, reason: stall.reason, firstStartedAt: stall.firstStartedAt },
-    idempotencyKey: operationStallAuditKey(stall),
+    mutation: { kind: "park-operation", operationId: stall.operationId, reason: stall.reason, observedSince: stall.observedSince },
+    idempotencyKey: operationParkAuditKey(stall),
     now: () => now,
   });
-  return deps.store.transaction({ label: "operation-stall.journal" }, async (tx) => {
-    if (await tx.journal.getRecord(audit.id) !== null) return null;
+  return deps.store.transaction({ label: "operation-stall.park" }, async (tx) => {
+    const current = await tx.journal.operations.get(stall.operationId);
+    if (current === null || current.status !== "pending" || current.startedAt !== null || isOperationStallParked(current) ||
+        (current.attempts ?? 0) !== stall.attempts || await tx.journal.getRecord(audit.id) !== null) return null;
+    await tx.journal.operations.patch(stall.operationId, {
+      stallPark: parkRecord(stall, audit.id, now),
+      waitingOn: PARKED_OPERATION_WAITING_ON,
+      nextAttemptAt: { clear: true },
+    }, { status: ["pending"], startedAt: null });
     await tx.journal.audits.create({
       ...audit.document,
       id: audit.id,
@@ -190,7 +214,7 @@ async function journalStallOnset(deps: StalledOperationObserverDeps, stall: Oper
 }
 
 function stallRecord(stall: OperationStall, namespace: string, auditId: string | null, now: number): OperationStallRecord {
-  const { firstStartedAt: _firstStartedAt, stuckSince, ...rest } = stall;
+  const { observedSince: _observedSince, stuckSince, parkedAt, ...rest } = stall;
   return {
     schema: OPERATION_STALL_RECORD_SCHEMA,
     recordType: "operation_stall",
@@ -198,28 +222,37 @@ function stallRecord(stall: OperationStall, namespace: string, auditId: string |
     namespace,
     ...rest,
     stuckSince: new Date(stuckSince).toISOString(),
+    parked: parkedAt !== null,
+    parkedAt: parkedAt === null ? null : new Date(parkedAt).toISOString(),
     auditId,
   };
+}
+
+async function parkAndReport(deps: StalledOperationObserverDeps, stall: OperationStall, now: number): Promise<OperationStall> {
+  try {
+    const auditId = await parkStalledOperation(deps, stall, now);
+    if (auditId === null) return stall;
+    const parked = { ...stall, parkedAt: now };
+    (deps.emit ?? emitStallRecord)(stallRecord(parked, deps.namespace, auditId, now));
+    return parked;
+  } catch (error) {
+    deps.log(`[operation-stall] ❌ ${stall.operationId} could not be parked: ${error instanceof Error ? error.message : String(error)}`);
+    (deps.emit ?? emitStallRecord)(stallRecord(stall, deps.namespace, null, now));
+    return stall;
+  }
 }
 
 export async function runStalledOperationObserverTick(deps: StalledOperationObserverDeps): Promise<OperationStall[]> {
   const active = await deps.store.journal.operations.listByStatus(["pending", "running"]);
   const now = deps.now();
-  const stalls = findStalledOperations(active, now);
-  recordStalledOperations(stalls.map((stall) => ({
-    operationId: stall.operationId, kind: stall.kind, reason: stall.reason, queuedOperations: stall.queuedBehind.length,
-  })));
-  for (const stall of stalls) {
-    let auditId: string | null;
-    try {
-      auditId = await journalStallOnset(deps, stall, now);
-      if (auditId === null) continue;
-    } catch (error) {
-      deps.log(`[operation-stall] ❌ ${stall.operationId} stall could not be journaled: ${error instanceof Error ? error.message : String(error)}`);
-      auditId = null;
-    }
-    (deps.emit ?? emitStallRecord)(stallRecord(stall, deps.namespace, auditId, now));
+  const stalls: OperationStall[] = [];
+  for (const stall of findStalledOperations(active, now)) {
+    stalls.push(stall.parkedAt === null && stall.status === "pending" ? await parkAndReport(deps, stall, now) : stall);
   }
+  recordStalledOperations(stalls.map((stall) => ({
+    operationId: stall.operationId, kind: stall.kind, reason: stall.reason,
+    state: stall.parkedAt === null ? "retrying" : "parked", queuedOperations: stall.queuedBehind.length,
+  })));
   return stalls;
 }
 

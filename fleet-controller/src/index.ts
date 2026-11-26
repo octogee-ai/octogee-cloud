@@ -2239,6 +2239,7 @@ async function attemptClaimOrQueueOperation(
           createdAt: freshOperation.createdAt,
           queuedAt: freshOperation.queuedAt,
           nextAttemptAt: freshOperation.nextAttemptAt,
+          stallPark: freshOperation.stallPark,
           input: freshOperation.input,
           schedulerHandoff: freshOperation.schedulerHandoff,
           userMigrationV2: freshOperation.userMigrationV2,

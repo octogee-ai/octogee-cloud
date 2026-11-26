@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
 import { isOperationAuditRecord, type Operation, type OperationAttemptRecord } from "@octogee/shared/types/glm";
+import { PARKED_OPERATION_WAITING_ON, resumeParkedOperationInTransaction } from "@octogee/core/operation-stall-park";
 import { buildOperationCompletionUpdate } from "../operation-retry.js";
+import { decideOperationClaim } from "../operation-queue.js";
 import {
   OPERATION_STALL_RECORD_SCHEMA,
   STALLED_OPERATION_HOLD_MS,
@@ -149,25 +151,85 @@ describe("operations holding a queue", () => {
   });
 });
 
-describe("stalled operation observer", () => {
+describe("parking a stalled operation", () => {
   let records: Record<string, Record<string, unknown>>;
   let emitted: OperationStallRecord[];
   let now: number;
+  const store = () => createDocumentFixtureStore(records);
   const tick = () => runStalledOperationObserverTick({
-    store: createDocumentFixtureStore(records), namespace: "octogee", now: () => now, log: () => {},
+    store: store(), namespace: "octogee", now: () => now, log: () => {},
     emit: (record) => emitted.push(record),
   });
+  const row = (id: string) => ({ id, ...records[`glmOperations/${id}`] }) as Operation;
+  const claimDecision = (id: string) => {
+    const op = row(id);
+    const others = Object.keys(records)
+      .filter((key) => key.startsWith("glmOperations/") && key !== `glmOperations/${id}`)
+      .map((key) => row(key.slice("glmOperations/".length)))
+      .filter((other) => other.kind === op.kind);
+    return decideOperationClaim({
+      op, now,
+      runningOpsSameKind: others.filter((other) => other.status === "running"),
+      pendingOpsSameKind: others.filter((other) => other.status === "pending"),
+    });
+  };
+  const fail = (error: string) => {
+    const op = row(RETURN_ID);
+    const startedAt = now;
+    now += 4 * MINUTE;
+    const completion = buildOperationCompletionUpdate({
+      op: { ...op, startedAt },
+      result: { success: false, steps: [], error, rolledBack: false }, steps: [], now,
+    });
+    records[`glmOperations/${RETURN_ID}`] = { ...records[`glmOperations/${RETURN_ID}`], ...completion };
+    now += 5 * MINUTE;
+  };
+  const resume = (reason: string) => store().transaction({ label: "test.resume" }, (tx) =>
+    resumeParkedOperationInTransaction(tx, {
+      operationId: RETURN_ID, parkedAt: row(RETURN_ID).stallPark!.parkedAt, actor: "operator", reason,
+      auditId: "audit-resume", now,
+    }));
 
   beforeEach(() => {
     resetMetrics();
     emitted = [];
     now = START + 22 * MINUTE;
-    const { id: _returnId, ...stalled } = returnMove(repeated(3));
+    const { id: _returnId, ...stalled } = returnMove(repeated(3), {
+      schedulerHandoff: { fromGatewayId: SOURCE, toGatewayId: TARGET, forwardRecovery: { schemaVersion: 1, phase: "source-flushed" } },
+      nextAttemptAt: now + 8 * MINUTE,
+    } as Partial<Operation>);
     const { id: _queuedId, ...queued } = queuedMove("placement-a", "shared-other", TARGET);
     records = { [`glmOperations/${RETURN_ID}`]: stalled, "glmOperations/placement-a": queued };
   });
 
-  it("journals and logs the stall once, and keeps the gauge raised while it lasts", async () => {
+  it("parks the move at the bound: it stays pending with its lock, stops retrying, and the park is journaled", async () => {
+    await tick();
+
+    const parked = row(RETURN_ID);
+    expect(parked).toMatchObject({
+      status: "pending",
+      attempts: 3,
+      startedAt: null,
+      waitingOn: PARKED_OPERATION_WAITING_ON,
+      stallPark: { reason: "repeated-failure", repeatedError: NOT_CONFIRMED, attempts: 3, consecutiveFailures: 3,
+        stuckSince: START, queuedBehind: ["placement-a"], parkedAt: now },
+      input: { uid: "user-a", fromGatewayId: SOURCE, toGatewayId: TARGET },
+    });
+    expect(parked.nextAttemptAt).toBeUndefined();
+    const audit = records[`glmOperations/${parked.stallPark!.auditId}`];
+    expect(isOperationAuditRecord(audit)).toBe(true);
+    expect(audit).toMatchObject({
+      actor: "fleet-controller",
+      status: "completed",
+      what: "park a fleet operation that is not making progress",
+      why: `the same failure repeated 3 times: ${NOT_CONFIRMED}`,
+      target: { operationId: RETURN_ID, toGatewayId: TARGET },
+      preActionStatus: { attempts: 3, lastError: NOT_CONFIRMED, queuedBehind: ["placement-a"] },
+      mutation: { kind: "park-operation", operationId: RETURN_ID, reason: "repeated-failure" },
+    });
+  });
+
+  it("says it is parked in the ERROR record and the gauge, once", async () => {
     await tick();
     now += MINUTE;
     await tick();
@@ -180,33 +242,71 @@ describe("stalled operation observer", () => {
       reason: "repeated-failure",
       repeatedError: NOT_CONFIRMED,
       attempts: 3,
+      parked: true,
+      parkedAt: new Date(START + 22 * MINUTE).toISOString(),
       stuckSince: new Date(START).toISOString(),
-      stuckForMs: 22 * MINUTE,
       queuedBehind: [{ id: "placement-a", kind: "migrate-user", waitingOn: `migration shared-other → ${TARGET}` }],
-    });
-    const audit = records[`glmOperations/${emitted[0].auditId}`];
-    expect(isOperationAuditRecord(audit)).toBe(true);
-    expect(audit).toMatchObject({
-      actor: "fleet-controller",
-      status: "completed",
-      target: { operationId: RETURN_ID, toGatewayId: TARGET },
-      preActionStatus: { attempts: 3, lastError: NOT_CONFIRMED, queuedBehind: ["placement-a"] },
-      mutation: { kind: "operation-stalled", operationId: RETURN_ID, reason: "repeated-failure" },
+      auditId: row(RETURN_ID).stallPark!.auditId,
     });
     expect(renderMetrics()).toContain(
-      `glm_operation_stalled{operation_id="${RETURN_ID}",kind="migrate-user",reason="repeated-failure"} 1`);
+      `glm_operation_stalled{operation_id="${RETURN_ID}",kind="migrate-user",reason="repeated-failure",state="parked"} 1`);
     expect(renderMetrics()).toContain(`glm_operation_stalled_queued_operations{operation_id="${RETURN_ID}"} 1`);
   });
 
-  it("still emits the stall record when the journal write fails", async () => {
-    const store = createDocumentFixtureStore(records);
+  it("refuses to claim the parked move even once its backoff would have elapsed, and keeps the queue behind it", async () => {
+    await tick();
+    now += 60 * MINUTE;
+
+    expect(claimDecision(RETURN_ID)).toEqual({ outcome: "skip" });
+    expect(claimDecision("placement-a")).toEqual({ outcome: "queue", waitingOn: expect.stringContaining(SOURCE) });
+  });
+
+  it("resumes by the operator's command, retries, and parks again on the same bound", async () => {
+    await tick();
+    now += 60 * MINUTE;
+    await resume("restarted the target gateway");
+
+    expect(row(RETURN_ID)).toMatchObject({ stallPark: { resumedBy: "operator", resumeReason: "restarted the target gateway",
+      resumeAuditId: "audit-resume" } });
+    expect(row(RETURN_ID).waitingOn).toBeUndefined();
+    expect(claimDecision(RETURN_ID)).toEqual({ outcome: "claim" });
+
+    fail(NOT_CONFIRMED);
+    fail(NOT_CONFIRMED);
+    await tick();
+    expect(row(RETURN_ID).stallPark?.resumedAt).toEqual(expect.any(Number));
+    expect(claimDecision(RETURN_ID)).toEqual({ outcome: "skip" });
+    expect(renderMetrics()).not.toContain("glm_operation_stalled{");
+
+    fail(NOT_CONFIRMED);
+    await tick();
+    const reparked = row(RETURN_ID);
+    expect(reparked).toMatchObject({ attempts: 6, waitingOn: PARKED_OPERATION_WAITING_ON,
+      stallPark: { attempts: 6, consecutiveFailures: 3, parkedAt: now } });
+    expect(reparked.stallPark?.resumedAt).toBeUndefined();
+    expect(reparked.stallPark?.auditId).not.toBe(emitted[0].auditId);
+    expect(emitted).toHaveLength(2);
+    expect(claimDecision(RETURN_ID)).toEqual({ outcome: "skip" });
+  });
+
+  it("reports a stall that is still running as retrying and parks it once it is pending again", async () => {
+    records[`glmOperations/${RETURN_ID}`] = { ...records[`glmOperations/${RETURN_ID}`], status: "running", startedAt: now };
+    await tick();
+    expect(row(RETURN_ID).stallPark).toBeUndefined();
+    expect(emitted).toEqual([]);
+    expect(renderMetrics()).toContain(`reason="repeated-failure",state="retrying"} 1`);
+  });
+
+  it("still emits the stall record, unparked, when the park cannot be written", async () => {
+    const fixture = store();
     const logged: string[] = [];
     await runStalledOperationObserverTick({
-      store: { ...store, transaction: async () => { throw new Error("database unavailable"); } } as typeof store,
+      store: { ...fixture, transaction: async () => { throw new Error("database unavailable"); } } as typeof fixture,
       namespace: "octogee", now: () => now, log: (line) => logged.push(line), emit: (record) => emitted.push(record),
     });
-    expect(emitted).toMatchObject([{ operationId: RETURN_ID, reason: "repeated-failure", auditId: null }]);
+    expect(emitted).toMatchObject([{ operationId: RETURN_ID, reason: "repeated-failure", parked: false, auditId: null }]);
     expect(logged).toEqual([expect.stringContaining("database unavailable")]);
+    expect(renderMetrics()).toContain(`state="retrying"} 1`);
   });
 
   it("lowers the gauge once the operation finishes", async () => {

@@ -19,6 +19,23 @@ import {
   type Seed,
 } from "@octogee/core-testing/admin-dry-run-app";
 import { FIXTURE_SIZING_PROFILES } from "@octogee/core-testing/journal-store";
+import { PARKED_OPERATION_WAITING_ON } from "./operation-stall-park.js";
+
+function parkedReturnFleet(): Seed {
+  return {
+    ...FLEET,
+    ...operation("parked-return", {
+      kind: "migrate-user", status: "pending", origin: "automatic", createdBy: "fleet-controller", createdAt: 1,
+      startedAt: null, completedAt: null, firstStartedAt: 10, steps: [], attempts: 3,
+      input: { uid: "uid-ada", fromGatewayId: "iso-ada", toGatewayId: "shared-b" },
+      waitingOn: PARKED_OPERATION_WAITING_ON,
+      stallPark: {
+        parkedAt: 100, reason: "repeated-failure", repeatedError: "status 503", lastError: "status 503",
+        attempts: 3, consecutiveFailures: 3, stuckSince: 10, queuedBehind: [], auditId: "audit-park",
+      },
+    }),
+  };
+}
 
 function unisolatedUserFleet(): Seed {
   return {
@@ -403,6 +420,10 @@ describe("every changing route", () => {
       body: { sourceGatewayId: heldNative.sourceGatewayId, targetGatewayId: heldNative.targetGatewayId,
         sourceEpoch: heldNative.sourceEpoch, schedulerMigrationId: heldNative.schedulerMigrationId,
         replacementGatewayId: sharedDrainPeer, oldPodUid: "old-pod", replacementPodUid: "peer-pod", ownerCount: 1 },
+    },
+    "POST /operations/:id/resume-parked": {
+      method: "post", path: "/operations/parked-return/resume-parked", body: { reason: "restarted the target gateway" },
+      seed: parkedReturnFleet,
     },
     "POST /placement-automation/owner": { method: "post", path: "/placement-automation/owner", body: { owner: "client" } },
   };
