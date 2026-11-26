@@ -2139,6 +2139,8 @@ describe("system_config restore", () => {
 
 
 describe("Isolated prelaunch config", () => {
+  const unchangedPolicy = async () => {};
+
   it.each([false, true])("boots only the gateway-local agent and preserves accepted config (already detached=%s)", async detached => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-prelaunch-config-"));
     const repo = path.join(root, "system_config");
@@ -2174,11 +2176,11 @@ describe("Isolated prelaunch config", () => {
     });
     try {
       const before = fs.readFileSync(path.join(repo, "openclaw.json"), "utf8");
-      await expect(prepareIsolatedPrelaunchConfig(root, "alice", env, async () => ({ code: 1, stdout: "" }))).rejects.toThrow("Native isolated prelaunch config write failed");
-      await expect(prepareIsolatedPrelaunchConfig(root, "alice", env, async () => ({ code: 1, stdout: "", stderr: "Gateway holder namespace is unknown; password=example-secret" })))
+      await expect(prepareIsolatedPrelaunchConfig(root, "alice", env, async () => ({ code: 1, stdout: "" }), unchangedPolicy)).rejects.toThrow("Native isolated prelaunch config write failed");
+      await expect(prepareIsolatedPrelaunchConfig(root, "alice", env, async () => ({ code: 1, stdout: "", stderr: "Gateway holder namespace is unknown; password=example-secret" }), unchangedPolicy))
         .rejects.toThrow("Gateway holder namespace is unknown; password=[redacted]");
       expect(fs.readFileSync(path.join(repo, "openclaw.json"), "utf8")).toBe(before);
-      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite);
+      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite, unchangedPolicy);
       const live = JSON.parse(fs.readFileSync(path.join(repo, "openclaw.json"), "utf8"));
       expect(Object.keys(live.agents.entries)).toEqual(["octogee-unmatched-route"]);
       expect(live.channels.mattermost.enabled).toBe(false);
@@ -2194,13 +2196,13 @@ describe("Isolated prelaunch config", () => {
       expect(accepted.agents).toMatchObject({ entries: config.agents.entries });
       expect(accepted.cron).toEqual({ enabled: true });
       expect(accepted.channels).toMatchObject({ mattermost: { enabled: true } });
-      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite);
+      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite, unchangedPolicy);
       expect(readAcceptedUserConfig(root, env).agents).toMatchObject({ entries: config.agents.entries });
       expect(nativeWrite).toHaveBeenCalledTimes(2);
       writeJson(path.join(repo, "openclaw.json"), { ...config, database: { engine: "sqlite" } });
       execFileSync("git", ["add", "openclaw.json"], { cwd: repo });
       execFileSync("git", ["-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid", "commit", "-m", "retained sqlite"], { cwd: repo });
-      await expect(prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite)).rejects.toThrow("Retained SQLite-configured Gateway stores cannot start");
+      await expect(prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite, unchangedPolicy)).rejects.toThrow("Retained SQLite-configured Gateway stores cannot start");
       expect(nativeWrite).toHaveBeenCalledTimes(2);
       expect(fs.readdirSync(root).filter(name => name.startsWith(".prelaunch-config-"))).toEqual([]);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -2229,12 +2231,50 @@ describe("Isolated prelaunch config", () => {
       return { code: 0, stdout: "" };
     });
     try {
-      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite);
+      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite, unchangedPolicy);
       expect(patch.browser).toMatchObject({ enabled: true, defaultProfile: "computer", attachOnly: true });
       expect(patch.plugins.allow).toEqual(expect.arrayContaining(["browser", "cua-computer", "file-transfer"]));
       expect(patch.plugins.entries.browser).toEqual({ enabled: true });
       expect(patch.desktop.host).toMatchObject({ enabled: true, port: 5901 });
       expect(patch.tools.profile).toBe("full");
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("writes the gateway class policy's voice tools into the prelaunch config", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "isolated-prelaunch-policy-"));
+    const repo = path.join(root, "system_config");
+    fs.mkdirSync(repo);
+    const env = withUserClaim({ OPENCLAW_DIR: root, GATEWAY_CLASS: "builder", GATEWAY_RUNTIME_KIND: "gce-vm",
+      GATEWAY_COMPUTER_DESKTOP: "omarchy", API_PUBLIC_URL: "https://api.example.test" }, "alice");
+    const accepted = {
+      agents: { entries: { "octogee-alice-coach": { workspace: path.join(root, "customers/alice") } } },
+      plugins: { allow: ["mattermost", "anthropic"], entries: { "octogee-voice-tools": { config: {} } } },
+    };
+    writeJson(path.join(repo, "openclaw.json"), accepted);
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["add", "openclaw.json"], { cwd: repo });
+    execFileSync("git", ["-c", "user.name=Synthetic Test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"], { cwd: repo });
+    const policy = vi.fn(async (configPath: string, policyEnv: NodeJS.ProcessEnv) => {
+      expect(configPath).not.toBe(path.join(repo, "openclaw.json"));
+      expect(policyEnv).toMatchObject({ GATEWAY_CLASS: "isolated", OPENCLAW_DIR: root });
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(config.plugins.entries.browser).toEqual({ enabled: true });
+      config.plugins.allow.push("octogee-voice-tools", "talk-voice");
+      config.plugins.entries["octogee-voice-tools"].enabled = true;
+      fs.writeFileSync(configPath, JSON.stringify(config));
+    });
+    let patch = {} as { plugins: { allow: string[]; entries: Record<string, { enabled?: boolean }> } };
+    const nativeWrite = vi.fn(async (args: string[]) => {
+      patch = JSON.parse(fs.readFileSync(args[args.indexOf("--file") + 1], "utf8")) as typeof patch;
+      return { code: 0, stdout: "" };
+    });
+    try {
+      await prepareIsolatedPrelaunchConfig(root, "alice", env, nativeWrite, policy);
+      expect(policy).toHaveBeenCalledTimes(1);
+      expect(patch.plugins.allow).toEqual(expect.arrayContaining(["octogee-voice-tools", "talk-voice", "browser"]));
+      expect(patch.plugins.entries["octogee-voice-tools"].enabled).toBe(true);
+      expect(JSON.parse(fs.readFileSync(path.join(repo, "openclaw.json"), "utf8"))).toEqual(accepted);
+      expect(fs.readdirSync(root).filter(name => name.startsWith(".prelaunch-"))).toEqual([]);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });
