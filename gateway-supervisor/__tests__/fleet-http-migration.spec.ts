@@ -4499,7 +4499,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const { getStatus } = await finishImport(deps, "mig-carry-release");
 
     expect(getStatus()).toBe(200);
-    expect(releaseAgent).toHaveBeenCalledWith("octogee-chris-coach");
+    expect(releaseAgent).toHaveBeenCalledWith("chris", "octogee-chris-coach");
     expect(rowCount(previous)).toBe(1);
     await expect(fs.access(`${previous}-wal`)).rejects.toThrow();
   });
@@ -5032,7 +5032,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const { getStatus, getBody } = await finishImport(deps, "mig-carry-permitted-user");
 
     expect(getStatus(), JSON.stringify(getBody())).toBe(200);
-    expect(deps.adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("octogee-chris-coach");
+    expect(deps.adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("chris", "octogee-chris-coach");
     expect(deps.runOpenClaw).not.toHaveBeenCalled();
     expect(rowCount(previous)).toBe(1);
   });
@@ -5135,7 +5135,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       const result = await finishImport(deps, migrationId);
 
       expectNoHeldGateCalls(deps);
-      expect(deps.adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("octogee-chris-coach");
+      expect(deps.adapter.releaseAgent).toHaveBeenCalledExactlyOnceWith("chris", "octogee-chris-coach");
       expect(deps.adapter.activateImportedUser).toHaveBeenCalledExactlyOnceWith("chris", { signal: expect.any(AbortSignal), migrationId });
       expect(rowCount(previous)).toBe(2);
       expect(result.getStatus()).toBe(200);
@@ -5179,7 +5179,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const result = await finishImport(deps, migrationId);
 
     expect(result.getStatus()).toBe(200);
-    expect(releaseAgent.mock.calls).toEqual([["octogee-chris-coach"], ["octogee-chris-coach"]]);
+    expect(releaseAgent.mock.calls).toEqual([["chris", "octogee-chris-coach"], ["chris", "octogee-chris-coach"]]);
     expect(rowCount(previous)).toBe(2);
     expect(deps.adapter.activateImportedUser).toHaveBeenCalledOnce();
   });
