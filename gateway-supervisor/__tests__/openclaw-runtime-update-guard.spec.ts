@@ -140,4 +140,31 @@ describe("OpenClaw runtime update coordination", () => {
     await second;
     await expect(guard.tryRun(async () => "repaired")).resolves.toBe("repaired");
   });
+
+  it("names the running update and the queue when a wait times out", async () => {
+    vi.useFakeTimers();
+    const guard = new OpenClawRuntimeUpdateGuard();
+    const add = deferred();
+    const adding = guard.run(() => add.promise, { slug: "alice", label: "add:alice" });
+    const releasing = expect(guard.run(async () => undefined, { slug: "bob", label: "release:octogee-bob-coach" }))
+      .rejects.toThrow("Timed out waiting for an OpenClaw runtime update: release:octogee-bob-coach waited 60000ms behind add:alice; queued: release:octogee-bob-coach, add:carol");
+    const queued = guard.run(async () => undefined, { slug: "carol", label: "add:carol", timeoutMs: 120_000 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await releasing;
+    add.resolve();
+    await adding;
+    await queued;
+  });
+
+  it("names the user publication a timed-out wait was held behind", async () => {
+    vi.useFakeTimers();
+    const guard = new OpenClawRuntimeUpdateGuard();
+    const tail = deferred();
+    await guard.run(async () => undefined, { slug: "alice", label: "add:alice", holdUntil: tail.promise });
+    const waiting = expect(guard.run(async () => undefined, { label: "prelaunch" }))
+      .rejects.toThrow("prelaunch waited 60000ms behind the runtime publication of alice; queued: prelaunch");
+    await vi.advanceTimersByTimeAsync(60_000);
+    await waiting;
+    tail.resolve();
+  });
 });

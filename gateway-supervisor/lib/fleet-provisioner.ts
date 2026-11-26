@@ -882,7 +882,7 @@ export function materializeDeferredBrokerProfiles(
   } = {},
 ): Promise<BrokerProfileReadiness> {
   if (brokerProfileSweepInFlight) return brokerProfileSweepInFlight;
-  const sweep = openClawRuntimeUpdateGuard.tryRun(() => runDeferredBrokerProfileSweep(log, deps));
+  const sweep = openClawRuntimeUpdateGuard.tryRun(() => runDeferredBrokerProfileSweep(log, deps), "broker-profile-sweep");
   if (!sweep) return Promise.resolve({
     settled: false, deferred: [], skipped: true, reason: "account import is updating the runtime",
   });
@@ -2184,7 +2184,7 @@ async function restartIsolatedPrelaunch(
   return openClawRuntimeUpdateGuard.run(async () => {
     await input.prepareIsolatedPrelaunch(input.request.slug);
     return input.processGate.permitNormal();
-  });
+  }, { label: `prelaunch:${input.request.slug}` });
 }
 
 function servingAfterWarmCleanup(state: SurgeOpenClawProcessGateState): boolean {

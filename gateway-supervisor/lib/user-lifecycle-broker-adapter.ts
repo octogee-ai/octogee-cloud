@@ -317,7 +317,7 @@ async function exportSourceActivationManifest(ctx: BrokerCtx, slug: string,
       }
       options.signal?.throwIfAborted();
       return exportActivationManifestWithSecret(OPENCLAW_CONFIG, OPENCLAW_DIR, slug);
-    }, { signal: options.signal, timeoutMs: remaining, slug });
+    }, { signal: options.signal, timeoutMs: remaining, slug, label: `export-manifest:${slug}` });
     if (manifest) return manifest;
     if (!waiting) ctx.log(`[migration-activation:${slug}] waiting for source runtime configuration to converge`);
     waiting = true;
@@ -2754,6 +2754,7 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
         slug: snapshot.slug,
         evicting: callOpts?.evictionBatch,
         holdUntil: callOpts?.runtimePublication?.settled,
+        label: `add:${snapshot.slug}`,
       }),
     reconcileConfiguredUserProjectAgents: (snapshot, options) =>
       openClawRuntimeUpdateGuard.run(async () => {
@@ -2763,10 +2764,11 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
         signal: options?.signal,
         slug: snapshot.slug,
         holdUntil: options?.runtimePublication?.settled,
+        label: `project-agents:${snapshot.slug}`,
       }),
     applyRemoveUserConfigPatch: (slug, agentId, evictionBatch, currentEvictionBatch) =>
       openClawRuntimeUpdateGuard.run(() =>
-        applyRemoveUserConfigPatch(ctx, slug, agentId, evictionBatch, currentEvictionBatch), { slug, evicting: evictionBatch }),
+        applyRemoveUserConfigPatch(ctx, slug, agentId, evictionBatch, currentEvictionBatch), { slug, evicting: evictionBatch, label: `remove:${slug}` }),
     resumeUser: (slug, resumeOptions) => openClawRuntimeUpdateGuard.run(async () => {
       if (resumeOptions?.role === "target") return resumeAssignedIsolatedRuntime(ctx, slug);
       const manifest = await readActivationManifest(OPENCLAW_DIR, slug).catch((error: NodeJS.ErrnoException) => {
@@ -2775,23 +2777,28 @@ function runtimeUpdateOperations(ctx: BrokerCtx): Pick<UserLifecycleAdapter,
       });
       if (manifest) await activateImportedUser(ctx, slug, { resumeExistingSharedCustody: true, migrationId: resumeOptions?.migrationId });
       await setUserChannelsRunning(ctx.rpc, slug, true);
-    }, { ignorePublications: true }),
+    }, { ignorePublications: true, label: `resume:${slug}` }),
     prepareImportDir: (slug, mode) => openClawRuntimeUpdateGuard.run(() =>
-      prepareImportDir(ctx, slug, mode, agentStateRelease(ctx, `[prepare-import:${slug}]`)), { slug }),
+      prepareImportDir(ctx, slug, mode, agentStateRelease(ctx, `[prepare-import:${slug}]`)), { slug, label: `prepare-import:${slug}` }),
     activateImportedUser: (slug, callOpts) =>
       openClawRuntimeUpdateGuard.run(() => activateImportedUser(ctx, slug, callOpts), {
         signal: callOpts?.signal,
         slug,
+        label: `activate-import:${slug}`,
       }),
     removeImportedUserBySlug: (slug, evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds) =>
       openClawRuntimeUpdateGuard.run(() =>
-        removeImportedUserBySlug(ctx, slug, { evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds }), { slug, evicting: evictionBatch }),
-    releaseAgent: (agentId) => openClawRuntimeUpdateGuard.run(() =>
-      releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`)),
+        removeImportedUserBySlug(ctx, slug, { evictionBatch, currentEvictionBatch, targetCleanup, erasureAgentIds }),
+      { slug, evicting: evictionBatch, label: `remove-import:${slug}` }),
+    releaseAgent: async (slug, agentId, signal) => {
+      if (!agentIdBelongsToSlug(agentId, slug)) throw new Error(`agent ${agentId} does not belong to ${slug}`);
+      await openClawRuntimeUpdateGuard.run(() => releaseAgentsAndInvalidateCache(ctx, [agentId], `[release:${agentId}]`),
+        { slug, ...(signal ? { signal } : {}), label: `release:${agentId}` });
+    },
     detachSourceAgents: (slug, agentIds, signal) => openClawRuntimeUpdateGuard.run(
       () => ctx.isIsolatedGateway() ? detachBuilderSourceAgents(ctx, slug, agentIds, signal)
         : detachAgentsInBatches(ctx, slug, agentIds, () => signal.throwIfAborted()),
-      { signal, slug },
+      { signal, slug, label: `detach:${slug}` },
     ),
   };
 }

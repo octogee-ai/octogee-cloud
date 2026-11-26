@@ -139,7 +139,8 @@ describe("migration manifest export runtime wait", () => {
     try {
       if (reason === "disconnect") controller.abort(new Error("export caller disconnected"));
       else await vi.advanceTimersByTimeAsync(50);
-      await expect(exported).resolves.toMatchObject({ message: reason === "disconnect" ? "export caller disconnected" : "Timed out waiting for an OpenClaw runtime update" });
+      await expect(exported).resolves.toMatchObject({ message: reason === "disconnect" ? "export caller disconnected"
+        : "Timed out waiting for an OpenClaw runtime update: export-manifest:alice waited 50ms behind the runtime publication of alice; queued: export-manifest:alice" });
       expect(openClawRuntimeUpdateGuard.tryRun(async () => undefined)).toBeUndefined();
       expect(secretMocks.exportActivationManifestWithSecret).not.toHaveBeenCalled();
     } finally { release(); }
@@ -6986,13 +6987,35 @@ it("waits for runtime publication before detaching a PostgreSQL roster entry", a
     await openClawRuntimeUpdateGuard.run(async () => undefined, { slug: "alice", holdUntil: custody });
     const rpc = mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })) });
     const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });
-    const detached = adapter.releaseAgent!("octogee-alice-coach");
+    const detached = adapter.releaseAgent!("alice", "octogee-alice-coach");
     try {
       await Promise.resolve();
       expect(rpc.agentsDetach).not.toHaveBeenCalled();
     } finally { finishPublication(); await detached; }
     expect(rpc.agentsDetach).toHaveBeenCalledExactlyOnceWith({ agentId: "octogee-alice-coach" });
   });
+});
+
+it("detaches one user's agent while another user's runtime publication settles", async () => {
+  await withPostgresAgentConfig({}, async () => {
+    let finishPublication!: () => void;
+    const custody = new Promise<void>((resolve) => { finishPublication = resolve; });
+    await openClawRuntimeUpdateGuard.run(async () => undefined, { slug: "bob", holdUntil: custody });
+    const rpc = mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })) });
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });
+    try {
+      await adapter.releaseAgent!("alice", "octogee-alice-coach");
+      expect(rpc.agentsDetach).toHaveBeenCalledExactlyOnceWith({ agentId: "octogee-alice-coach" });
+    } finally { finishPublication(); }
+  });
+});
+
+it("refuses to release an agent under another user's runtime scope", async () => {
+  const rpc = mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })) });
+  const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });
+  await expect(adapter.releaseAgent!("bob", "octogee-alice-coach"))
+    .rejects.toThrow("agent octogee-alice-coach does not belong to bob");
+  expect(rpc.agentsDetach).not.toHaveBeenCalled();
 });
 
 it("defers broker-profile reloads until PostgreSQL detach settles", async () => {
@@ -7003,7 +7026,7 @@ it("defers broker-profile reloads until PostgreSQL detach settles", async () => 
     });
     const rpc = mkGatewayRpc({ agentsDetach: vi.fn(() => pending) });
     const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });
-    const detached = adapter.releaseAgent!("octogee-alice-coach");
+    const detached = adapter.releaseAgent!("alice", "octogee-alice-coach");
     const readConfig = vi.fn(() => ({ agents: { entries: {} } }));
     try {
       await vi.waitFor(() => expect(rpc.agentsDetach).toHaveBeenCalledOnce());
@@ -7067,7 +7090,7 @@ it("releases a PostgreSQL roster entry through detach while preserving its ancho
   const rpc = mkGatewayRpc({ agentsDetach: vi.fn(async ({ agentId }) => ({ ok: true, agentId })) });
   try {
     const adapter = buildBrokeredLifecycleAdapter({ client: mkClient(), rpc, log: vi.fn() });
-    await adapter.releaseAgent!(agentId);
+    await adapter.releaseAgent!("pgfixture", agentId);
     expect(rpc.agentsDetach).toHaveBeenCalledExactlyOnceWith({ agentId });
     expect(rpc.agentsDelete).not.toHaveBeenCalled();
     expect((await fs.stat(file)).size).toBeGreaterThan(0);
