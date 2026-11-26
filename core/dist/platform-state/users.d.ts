@@ -2,7 +2,7 @@ import type { AccountLifecycle } from "@octogee/shared/types/account-lifecycle";
 import type { UserAuxiliaryFamily, FleetBrokerUserRuntimeReset } from "@octogee/shared/types/fleet-broker";
 import type { ConnectorCaptureMethod, IntegrationStatus } from "@octogee/shared/types/connectors";
 import type { NativeScheduleCheckpoint, ScheduleTransferDoc } from "@octogee/shared/types/fleet-controller";
-import type { UserParkedVm, GatewayProfile, GatewayVmHomeCheckpoint, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
+import type { UserParkedVm, GatewayProfile, GatewayVmDesktop, GatewayVmHomeCheckpoint, RetainedUserHome, RetainedUserHomeSnapshot } from "@octogee/shared/types/glm";
 import type { PlacementReceipt, PlacementReceiptKind } from "@octogee/shared/types/placement-receipts";
 import type { WorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import type { Clearable, OpaqueMap, Page, PageRequest, RecordPatch, Revision, Stored, TimeInput } from "./store.js";
@@ -83,6 +83,7 @@ interface UserHomeArchiveIdentity {
         readonly zone: string;
         readonly homeDiskId: string;
     };
+    readonly desktop?: GatewayVmDesktop;
     readonly nativeSchedulerRetirement?: OpaqueMap;
 }
 interface UserHomeSnapshotCustody {

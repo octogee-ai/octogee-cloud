@@ -1,5 +1,5 @@
 import { type SharedHeldReturnMaintenanceAdmin } from "./shared-held-return-maintenance.js";
-export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
+export { archivedSchedulerSourceImage, archiveSchedulerCustodyMatches, enqueueParkedHomeArchive, isAuthorizedHomeArchiveOrigin, planArchiveAfterBackupRelease, planReturnedHomeArchive, readParkedHomeArchiveGrant, resolveParkedHomeArchiveGrant, retainedBootPreservesScheduler, simpleHomePreparation } from "./parked-home-archive.js";
 import { type HeldNativeOriginalRestartWitness, type HeldNativeReturnSelection, type HeldNativeStoppedOriginalWitness } from "./held-native-return-repair.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { type GatewayClass, type GatewayImageProfile, type GatewayProfile, type GatewayRuntime, type GatewayVmState, type OperationAuditAliasPlan } from "@octogee/shared/types/glm";

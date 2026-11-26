@@ -124,11 +124,11 @@ export async function restoreArchivedHome(deps: {
   store: PlatformStateStore; vm: GatewayVmClient;
   rebind?: (description: GatewayVmDescription) => Promise<GatewayVmDescription>;
 }, identity: Identity, spec: GatewayVmSpec, input: CreateGatewayVmInput): Promise<GatewayVmDescription> {
-  if (spec.desktop !== "x11") throw new Error("User home archive requires the same desktop runtime");
   const { store, vm } = deps;
   const { ownerUid, gatewayId } = identity;
   const claim: Restoring = await store.transaction({ label: "parked-home.restore-claim" }, async tx => {
     const { owner, archive, lease } = await readDemand(tx, identity, true);
+    if ((archive.desktop ?? "x11") !== spec.desktop) throw new Error("User home archive requires the same desktop runtime");
     if (archive.phase === "restoring") {
       if (archive.targetInstanceName !== input.instanceName) throw new Error("Restore VM name differs from the original claim");
       if (matchingRestoreDemand(archive, identity, lease)) return archive;

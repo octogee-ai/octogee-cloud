@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocumentFixtureStore } from "@octogee/core-testing/journal-store";
-import { archivedSchedulerSourceImage, enqueueParkedHomeArchive, planReturnedHomeArchive } from "./parked-home-archive.js";
+import { archivedSchedulerSourceImage, enqueueParkedHomeArchive, logger, planReturnedHomeArchive } from "./parked-home-archive.js";
 
 const fence = { ownerUid: "UidA", sizingProfile: "desktop-small" };
 const parked = { instanceName: "owner-computer", zone: "us-central1-b", instanceId: "200",
@@ -12,15 +12,26 @@ const operation = { id: "return-1", status: "succeeded", kind: "migrate-user", c
   inputUid: fence.ownerUid, input: { uid: fence.ownerUid, fromGatewayId: parked.gatewayId, toGatewayId: "shared-a" },
   output: { nativeSourcePark: { parked: "stopped" } }, steps: [] };
 
-function fixture(options: { status?: string; leaseStatus?: string; homeStorage?: boolean; native?: boolean; schedulerDiskId?: string } = {}) {
+interface FixtureOptions {
+  status?: string; leaseStatus?: string; homeStorage?: boolean; native?: boolean; schedulerDiskId?: string;
+  desktop?: "omarchy" | "x11"; idleStorage?: "snapshot"; vmStatus?: string;
+}
+
+function fixture(options: FixtureOptions = {}) {
+  const vmSpec = { desktop: options.desktop ?? parked.vmSpec.desktop };
+  const profile = { isolation: "isolated", sizingTier: "s", fallbackStorageGb: null, computer: {
+    runtime: "gce-vm", desktop: "omarchy", machineType: "e2-standard-2", provisioningModel: "SPOT",
+    bootDisk: { sizeGb: 80, type: "pd-ssd" }, homeSizeGiB: 10, ...(options.idleStorage ? { idleStorage: options.idleStorage } : {}),
+  } };
   const documents = new Map<string, Record<string, unknown>>([
+    ["config/orchestrator", { sizingProfiles: { [fence.sizingProfile]: profile } }],
     ["users/UidA", { provisioning: {
       ...(options.native ? { projectStorage: { nativeBoot: true }, pendingNativeSchedulerRetirement: {
         uid: fence.ownerUid, slug: "alice", returnOperationId: operation.id, migrationId: "scheduler-return-1",
         sourceGatewayId: parked.gatewayId, sharedGatewayId: "shared-a", instanceName: parked.instanceName,
         instanceId: parked.instanceId, zone: parked.zone, homeDiskId: options.schedulerDiskId ?? homeDisk.id,
         homeDiskSource: homeDisk.source, completedAt: 10, cutoverCommittedAt: 5,
-      } } : { computer: parked }), homeDisk, ...(options.homeStorage ? { homeStorage: { runtime: "gce-vm" } } : {}),
+      } } : { computer: { ...parked, vmSpec } }), homeDisk, ...(options.homeStorage ? { homeStorage: { runtime: "gce-vm" } } : {}),
       openclaw: { slug: "alice", gatewayId: "shared-a", activationLease: { status: options.leaseStatus ?? "parked", leaseId: "lease-1",
         generation: 1, targetGatewayId: parked.gatewayId, sourceGatewayId: "shared-a", returnOperationId: "return-1" } },
     } }],
@@ -28,8 +39,8 @@ function fixture(options: { status?: string; leaseStatus?: string; homeStorage?:
       sizingProfile: fence.sizingProfile, desiredStatus: "paused", desiredRelease: 1, liveRelease: 1, latestRelease: 1 }],
     ["gateways/shared-a", { gatewayId: "shared-a", gatewayClass: "shared", desiredStatus: "running", desiredRelease: 1, latestRelease: 1 }],
     ["gateways/shared-a/assignments/UidA", { uid: "UidA", slug: "alice", gatewayId: "shared-a", source: "onboarding", state: "serving", epoch: 3 }],
-    ["glmGateways/owner-gateway", { docKind: "runtime", release: 1, lifecycle: "serving", gatewayId: parked.gatewayId, runtime: "gce-vm", vmSpec: parked.vmSpec,
-      vm: { ...parked, status: "SUSPENDED", updatedAt: 10 } }],
+    ["glmGateways/owner-gateway", { docKind: "runtime", release: 1, lifecycle: "serving", gatewayId: parked.gatewayId, runtime: "gce-vm", vmSpec,
+      vm: { ...parked, vmSpec, status: options.vmStatus ?? "SUSPENDED", updatedAt: 10 } }],
     ["glmOperations/return-1", { ...operation, status: options.status ?? "succeeded", ...(options.native ? {
       cutoverCommittedAt: 5, schedulerHandoff: {
         uid: fence.ownerUid, slug: "alice", migrationId: "scheduler-return-1",
@@ -123,7 +134,7 @@ describe("enroll a parked home archive", () => {
 
 
 describe("archive after a durably settled return", () => {
-  async function complete(store: ReturnType<typeof fixture>, grant = fence, pendingDemand = false) {
+  async function complete(store: ReturnType<typeof fixture>, grant: typeof fence | undefined = fence, pendingDemand = false) {
     return store.transaction({ label: "fixture.complete-return" }, async tx => {
       const owner = (await tx.users.records.get(fence.ownerUid))!;
       const lease = { ...owner.activationLease!, status: pendingDemand ? "requested" as const : "parked" as const };
@@ -153,4 +164,71 @@ describe("archive after a durably settled return", () => {
       expect(owner?.fences.computerRecovery).toBeUndefined();
     },
   );
+});
+
+describe("idle storage policy of the sizing profile", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  async function settleReturn(store: ReturnType<typeof fixture>) {
+    const retained = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    await store.transaction({ label: "fixture.complete-return" }, async tx => {
+      const owner = (await tx.users.records.get(fence.ownerUid))!;
+      const lease = { ...owner.activationLease!, status: "parked" as const };
+      const applyArchive = await planReturnedHomeArchive(tx, owner, lease, undefined, 12);
+      await applyArchive?.();
+    });
+    return retained.mock.calls.map(([, context]) => context);
+  }
+
+  it("queues the snapshot archive of a parked VM without any operator grant", async () => {
+    const store = fixture({ desktop: "omarchy", idleStorage: "snapshot" });
+    const retained = await settleReturn(store);
+    const owner = await store.users.records.get(fence.ownerUid);
+    const operationId = owner?.home.homeArchive?.operationId;
+    expect(owner?.home.homeArchive).toMatchObject({ phase: "preparing", gatewayId: parked.gatewayId, instanceId: "200", desktop: "omarchy" });
+    expect(owner?.fences.computerRecovery).toMatchObject({ operationId, gatewayId: parked.gatewayId, instanceId: "200" });
+    expect(await store.journal.operations.get(operationId!)).toMatchObject({
+      kind: "gateway-vm", origin: "automatic", status: "pending", input: { action: "archive", expectedInstanceId: "200" },
+    });
+    expect(retained).toEqual([]);
+  });
+
+  it("retains both disks of a parked VM whose profile does not ask for a snapshot", async () => {
+    const store = fixture({ desktop: "omarchy" });
+    const retained = await settleReturn(store);
+    const owner = await store.users.records.get(fence.ownerUid);
+    expect(owner?.home.homeArchive).toBeUndefined();
+    expect(owner?.fences.computerRecovery).toBeUndefined();
+    expect(await store.journal.operations.listForUid(fence.ownerUid, { statuses: ["pending", "running"] })).toEqual([]);
+    expect(retained).toEqual([]);
+  });
+
+  it.each([
+    ["the VM is not verifiably parked", { vmStatus: "RUNNING" }, /parked VM observation/],
+    ["the return has not settled", { status: "running" }, /settled native return/],
+    ["the VM still runs another desktop", { desktop: "x11" as const }, /parked VM observation/],
+    ["the home is mid-migration", { homeStorage: true }, /simple retained home/],
+  ])("retains both disks and says why when %s", async (_name, options, why) => {
+    const store = fixture({ desktop: "omarchy", idleStorage: "snapshot", ...options });
+    const retained = await settleReturn(store);
+    const owner = await store.users.records.get(fence.ownerUid);
+    expect(owner?.home.homeArchive).toBeUndefined();
+    expect(owner?.fences.computerRecovery).toBeUndefined();
+    expect(retained).toEqual([{ uid: fence.ownerUid, gatewayId: parked.gatewayId, sizingProfile: fence.sizingProfile, reason: expect.stringMatching(why) }]);
+  });
+
+  it("follows the profile's policy for an owner who also holds an operator grant", async () => {
+    const store = fixture({ desktop: "omarchy", idleStorage: "snapshot" });
+    await store.transaction({ label: "fixture.complete-return" }, async tx => {
+      const owner = (await tx.users.records.get(fence.ownerUid))!;
+      await (await planReturnedHomeArchive(tx, owner, { ...owner.activationLease!, status: "parked" }, fence, 12))?.();
+    });
+    expect((await store.users.records.get(fence.ownerUid))?.home.homeArchive).toMatchObject({ phase: "preparing", desktop: "omarchy" });
+  });
+
+  it("records the desktop of an operator-granted archive", async () => {
+    const store = fixture();
+    await enqueueParkedHomeArchive(store, { ownerUid: fence.ownerUid, grant: fence, createdBy: "operator" });
+    expect((await store.users.records.get(fence.ownerUid))?.home.homeArchive).toMatchObject({ phase: "preparing", desktop: "x11" });
+  });
 });

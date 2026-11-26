@@ -139,6 +139,17 @@ describe("setting a sizing profile", () => {
     expect((await store.config.orchestrator.get())?.sizingProfiles).toEqual({ pod: POD });
   });
 
+  it("stores a VM profile that replaces its idle VM and disks with a home snapshot, and shows it again", async () => {
+    const { app, store } = harness();
+    const snapshotting = { ...STANDARD, computer: { ...STANDARD.computer, idleStorage: "snapshot" } };
+
+    const res = await put(app, "standard", snapshotting).expect(200);
+
+    expect(res.body).toMatchObject({ name: "standard", profile: snapshotting });
+    expect((await store.config.orchestrator.get())?.sizingProfiles).toEqual({ standard: snapshotting });
+    expect((await request(app).get("/sizing-profiles/standard").expect(200)).body).toMatchObject({ profile: snapshotting });
+  });
+
   it("allows a pod profile at a tier where another profile runs a VM", async () => {
     const { app, store } = harness(withFixtureProfiles());
     expect(FIXTURE_SIZING_PROFILES.hobby).toMatchObject({ sizingTier: POD.sizingTier, computer: { runtime: "gce-vm" } });
@@ -203,6 +214,8 @@ describe("refusing a sizing profile", () => {
     ["a negative fallback storage size", "standard", { ...STANDARD, fallbackStorageGb: -1 }, 400, "sizing-profile-invalid"],
     ["an isolated profile without a machine type", "standard", { ...STANDARD, computer: { ...STANDARD.computer, machineType: null } }, 400, "sizing-profile-no-vm"],
     ["an isolated profile without a boot disk", "standard", { ...STANDARD, computer: { ...STANDARD.computer, bootDisk: null } }, 400, "sizing-profile-no-vm"],
+    ["an idle storage policy the platform does not know", "standard", { ...STANDARD, computer: { ...STANDARD.computer, idleStorage: "delete" } }, 400, "sizing-profile-invalid"],
+    ["pod settings with the VM idle storage policy", "pod", { ...POD, computer: { ...POD.computer, idleStorage: "snapshot" } }, 400, "sizing-profile-invalid"],
     ["pod settings with a VM field", "pod", { ...POD, computer: { ...POD.computer, machineType: "e2-small" } }, 400, "sizing-profile-invalid"],
     ["pod settings without a home size", "pod", { ...POD, computer: { runtime: "cluster" } }, 400, "sizing-profile-invalid"],
     ["a pod home that is not a positive whole number of GiB", "pod", { ...POD, computer: { runtime: "cluster", homeSizeGiB: 0 } }, 400, "sizing-profile-invalid"],

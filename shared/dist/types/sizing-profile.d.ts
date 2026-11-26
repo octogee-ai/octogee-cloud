@@ -11,6 +11,7 @@ export interface GatewayVmProfile {
         readonly type: GatewayVmBootDiskType;
     } | null;
     readonly homeSizeGiB: number;
+    readonly idleStorage?: "snapshot";
 }
 export interface GatewayPodProfile {
     readonly runtime: Extract<GatewayRuntime, "cluster">;
@@ -29,6 +30,7 @@ export type GatewaySizingProfile = {
 export declare function isGatewayVmProfile(value: unknown): value is GatewayVmProfile;
 export declare function isGatewayPodProfile(value: unknown): value is GatewayPodProfile;
 export declare function ephemeralPodHomeGiB(profile: GatewaySizingProfile | null | undefined): number | undefined;
+export declare function idleSnapshotDesktop(profile: GatewaySizingProfile | null | undefined): GatewayVmDesktop | undefined;
 export declare function isGatewaySizingProfile(value: unknown): value is GatewaySizingProfile;
 export declare function isolatedSizingTier(profile: GatewaySizingProfile | null): SizingTier | null;
 export declare function requireSizingProfile(profiles: Readonly<Record<string, GatewaySizingProfile>>, sizingKey: string): GatewaySizingProfile;

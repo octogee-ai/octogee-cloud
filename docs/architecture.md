@@ -203,6 +203,15 @@ the Control UI included. It runs as a Kubernetes pod with its own service
 account and home claim, or on a Google Cloud virtual machine, which adds a
 desktop. A sizing profile chooses which.
 
+A virtual machine keeps its boot and home disks while its user is back on the
+shared gateway. A VM sizing profile with `"idleStorage": "snapshot"` trades that
+for cost: once the return has settled, the controller snapshots the home,
+verifies the snapshot, and only then deletes the machine and both disks. The
+next activation creates a machine from the current image on a home restored
+from the snapshot. Files in the home survive; packages, settings and services
+installed outside it do not. If the return, the parked machine or the snapshot
+cannot be verified, the disks stay and the controller logs why.
+
 A user's agents, channels, repositories, agent stores and schedules are records
 the fleet controller owns, so it can move a user from one gateway to another.
 Fences ensure one gateway serves the user at a time.
