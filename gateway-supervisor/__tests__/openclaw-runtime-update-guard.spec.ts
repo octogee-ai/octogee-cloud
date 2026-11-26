@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenClawRuntimeUpdateGuard } from "../lib/openclaw-runtime-update-guard.js";
+import { OpenClawRuntimeUpdateGuard, RUNTIME_UPDATE_AGING_MS } from "../lib/openclaw-runtime-update-guard.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -166,5 +166,74 @@ describe("OpenClaw runtime update coordination", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await waiting;
     tail.resolve();
+  });
+
+  it("starts waiting updates in arrival order once the running update ends", async () => {
+    const guard = new OpenClawRuntimeUpdateGuard();
+    const running = deferred();
+    const started: string[] = [];
+    const first = guard.run(() => running.promise, { slug: "alice", label: "add:alice" });
+    const queued = ["add:bob", "add:carol", "add:dave"].map((label) =>
+      guard.run(async () => { started.push(label); }, { slug: label.slice(4), label }));
+    running.resolve();
+    await first;
+    await Promise.all(queued);
+    expect(started).toEqual(["add:bob", "add:carol", "add:dave"]);
+  });
+
+  it("starts a waiting migration step ahead of adds that arrived before it", async () => {
+    const guard = new OpenClawRuntimeUpdateGuard();
+    const running = deferred();
+    const started: string[] = [];
+    const first = guard.run(() => running.promise, { slug: "alice", label: "add:alice" });
+    const record = (label: string) => async () => { started.push(label); };
+    const queued = [
+      guard.run(record("add:bob"), { slug: "bob", label: "add:bob" }),
+      guard.run(record("add:carol"), { slug: "carol", label: "add:carol" }),
+      guard.run(record("release:octogee-erin-coach"), { slug: "erin", label: "release:octogee-erin-coach", priority: "migration" }),
+    ];
+    running.resolve();
+    await first;
+    await Promise.all(queued);
+    expect(started).toEqual(["release:octogee-erin-coach", "add:bob", "add:carol"]);
+  });
+
+  it("lets a waiting add go next once it has waited the aging window, even while moves keep arriving", async () => {
+    vi.useFakeTimers();
+    const guard = new OpenClawRuntimeUpdateGuard();
+    const started: string[] = [];
+    const holds: Array<() => void> = [];
+    const move = (index: number) => guard.run(() => new Promise<void>((resolve) => {
+      started.push(`move-${index}`);
+      holds.push(resolve);
+    }), { slug: `mover${index}`, label: `move-${index}`, priority: "migration", timeoutMs: 600_000 });
+    const moves = [move(0)];
+    const add = guard.run(async () => { started.push("add"); }, { slug: "adder", label: "add:adder", timeoutMs: 600_000 });
+    let index = 1;
+    while (!started.includes("add") && index < 50) {
+      moves.push(move(index));
+      index += 1;
+      await vi.advanceTimersByTimeAsync(5_000);
+      holds.shift()?.();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(started).toContain("add");
+    expect(started.indexOf("add")).toBeLessThanOrEqual(Math.ceil(RUNTIME_UPDATE_AGING_MS / 5_000) + 1);
+    await add;
+    while (holds.length > 0 || moves.length > started.filter((label) => label.startsWith("move")).length) {
+      holds.shift()?.();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    await Promise.all(moves);
+  });
+
+  it("does not hold an eligible update behind an earlier one still waiting for its user's publication", async () => {
+    const guard = new OpenClawRuntimeUpdateGuard();
+    const tail = deferred();
+    await guard.run(async () => undefined, { slug: "alice", holdUntil: tail.promise });
+    const alice = guard.run(async () => "alice", { slug: "alice", label: "export-manifest:alice", priority: "migration" });
+    await expect(guard.run(async () => "bob", { slug: "bob", label: "add:bob" })).resolves.toBe("bob");
+    tail.resolve();
+    await expect(alice).resolves.toBe("alice");
   });
 });
