@@ -21,6 +21,7 @@ export interface MigrationRunnerDeps {
     commitCutover: (commit: CutoverCommit) => Promise<void>;
     readCurrentGateway?: () => Promise<string | null>;
     prepareRollbackTarget?: (gatewayId: string, slug: string) => Promise<void>;
+    prepareRollbackSource?: (gatewayId: string, slug: string) => Promise<void>;
     setAssignmentState?: (input: {
         gatewayId: string;
         uid: string;

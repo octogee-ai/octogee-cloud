@@ -984,6 +984,71 @@ describe("rollback releases the source", () => {
   expect(h.assignmentWrites).toEqual(fenced ? [expect.objectContaining({ state: "quiescing" }), expect.objectContaining({ state: "serving" })] : []);
 });
 
+describe("rollback agent-store custody", () => {
+  function custodyHarness(failAt: "final" | "verify") {
+    const h = harness({ gateAssignment: true });
+    h.deps.wait = async () => undefined;
+    const order: string[] = [];
+    let owner = "gw-blue";
+    if (failAt === "final") {
+      vi.mocked(h.client.transferState).mockImplementation(async ({ mode, slug }) => {
+        if (mode === "final") throw new Error("Timed out waiting for an OpenClaw runtime update");
+        return { migrationId: "m1", slug, imported: true };
+      });
+    } else {
+      vi.mocked(h.client.verifyTarget).mockRejectedValue(new Error("target coach is not wired"));
+    }
+    h.deps.prepareRollbackTarget = vi.fn(async (gatewayId) => { owner = gatewayId; order.push(`stores:${gatewayId}`); });
+    h.deps.prepareRollbackSource = vi.fn(async (gatewayId) => { owner = gatewayId; order.push(`stores:${gatewayId}`); });
+    vi.mocked(h.client.unmount).mockImplementation(async ({ gatewayId, slug }) => {
+      order.push(`unmount:${gatewayId}`);
+      return { migrationId: "m1", slug, unmounted: true };
+    });
+    vi.mocked(h.client.resume).mockImplementation(async ({ gatewayId }) => {
+      if (owner !== gatewayId) throw new Error(`PostgreSQL search capability unavailable: insufficient CREATE privilege on ${gatewayId}`);
+      order.push(`resume:${gatewayId}`);
+    });
+    return { ...h, order };
+  }
+
+  it.each(["final", "verify"] as const)("hands the stores back to the source before it resumes after a failed %s step", async (failAt) => {
+    const h = custodyHarness(failAt);
+
+    expect(await runMigration(h.input, h.deps)).toMatchObject({ success: false, rolledBack: true });
+
+    expect(h.order).toEqual(["stores:gw-green", "unmount:gw-green", "stores:gw-blue", "resume:gw-blue"]);
+    expect(h.deps.prepareRollbackSource).toHaveBeenCalledExactlyOnceWith("gw-blue", "alice");
+    expect(h.events).toContain("report:rollback:return-source-stores:done");
+    expect(h.assignmentWrites.at(-1)).toMatchObject({ gatewayId: "gw-blue", state: "serving" });
+  });
+
+  it("keeps the source fenced when its stores cannot be handed back", async () => {
+    const h = custodyHarness("final");
+    h.deps.prepareRollbackSource = vi.fn(async () => { throw new Error("agent-store handoff timeout"); });
+
+    const result = await runMigration(h.input, h.deps);
+
+    expect(result).toMatchObject({ success: false, rolledBack: false });
+    expect(result.errorAt?.error).toContain("rollback:return-source-stores: agent-store handoff timeout");
+    expect(h.client.resume).not.toHaveBeenCalled();
+    expect(h.events).toContain("report:rollback:return-source-stores:failed");
+    expect(h.assignmentWrites.at(-1)).toMatchObject({ state: "quiescing" });
+  });
+
+  it("leaves store custody alone when the target never received the stores", async () => {
+    const h = harness({ gateAssignment: true });
+    h.deps.prepareRollbackTarget = vi.fn(async () => undefined);
+    h.deps.prepareRollbackSource = vi.fn(async () => undefined);
+    vi.mocked(h.client.flushGateway).mockRejectedValueOnce(new Error("flush failed"));
+
+    expect(await runMigration(h.input, h.deps)).toMatchObject({ success: false, rolledBack: true });
+
+    expect(h.deps.prepareRollbackTarget).not.toHaveBeenCalled();
+    expect(h.deps.prepareRollbackSource).not.toHaveBeenCalled();
+    expect(h.client.resume).toHaveBeenCalled();
+  });
+});
+
 describe("pre-drain probe journaling", () => {
   it("reports a probe failure under wait-for-active-work, never as a quiesce-source step, and resumes ingress", async () => {
     const h = harness({ gateAssignment: true });

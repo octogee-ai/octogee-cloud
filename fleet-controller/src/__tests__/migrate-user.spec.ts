@@ -4225,6 +4225,28 @@ describe("source-owned user activation", () => {
     expect(vi.mocked(h.ctx.persistSchedulerHandoff!).mock.calls.every(([state]) => !state.forwardRecovery)).toBe(true);
   });
 
+  it("hands the stores back to the shared source gateway before it resumes after a failed final export", async () => {
+    const h = activation();
+    const order: string[] = [];
+    const transfer = vi.mocked(h.client.transferState).getMockImplementation()!;
+    vi.mocked(h.client.transferState).mockImplementation(async request => {
+      if (request.mode === "final") throw new Error("/push-rsync-state/shared-blue: 500 Timed out waiting for an OpenClaw runtime update");
+      return transfer(request);
+    });
+    h.deps.prepareMigrationAgentStores = vi.fn(async (gatewayId, slug, authority) => {
+      expect({ slug, uid: authority?.expectedUserUid }).toEqual({ slug: "alice", uid: "uid-alice" });
+      await authority!.assertCurrent();
+      order.push(`stores:${gatewayId}`);
+    });
+    const unmount = vi.mocked(h.client.unmount).getMockImplementation()!;
+    vi.mocked(h.client.unmount).mockImplementation(async request => { order.push(`unmount:${request.gatewayId}`); return unmount(request); });
+    vi.mocked(h.client.resume).mockImplementation(async request => { order.push(`resume:${request.gatewayId}`); });
+
+    expect(await createMigrateUserHandler(h.deps)(h.operation, h.ctx)).toMatchObject({ success: false, rolledBack: true });
+
+    expect(order.slice(order.indexOf("stores:gw-green"))).toEqual(["stores:gw-green", "unmount:gw-green", "stores:shared-blue", "resume:shared-blue"]);
+  });
+
   it("keeps Shared serving when the target uses another OpenClaw build", async () => {
     const h = activation();
     vi.mocked(h.deps.readOpenClawBuild!).mockImplementation(async gateway => gateway === "shared-blue" ? "a".repeat(40) : "b".repeat(40));
