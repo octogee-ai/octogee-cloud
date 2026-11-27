@@ -41,6 +41,23 @@ const SECRET_PATTERNS = [
   [/\b([\w-]*(?:token|secret|password|passwd|api[_-]?key)[\w-]*)(["']?\s*[:=]\s*["']?)[^\s"',&}]+/gi, "$1$2[redacted]"],
 ];
 
+export const PROJECT_SLUG = "harbor";
+const OPENCLAW_CONFIG = "/home/node/.openclaw/openclaw.json";
+const PROJECT_TIMEOUT_MS = 600_000;
+const PROJECT_AGENT_STORE_SQL = `SELECT gateway_id FROM platform.agent_stores WHERE uid = :'uid' AND agent_id = :'agent';
+`;
+const ARCHIVE_PROJECT_SQL = `UPDATE platform.workspace_projects SET commercial_lifecycle_status = 'archived'
+WHERE owner_uid = :'uid' AND project_slug = :'project';
+`;
+
+export function projectAgentId(user) {
+  return `octogee-${user}-proj-${PROJECT_SLUG}-coach`;
+}
+
+export function configuresAgent(config, agentId) {
+  return new RegExp(`"id"\\s*:\\s*"${agentId}"`).test(config);
+}
+
 const GATEWAY_LEDGER_SQL = `SELECT event::text FROM platform.model_broker_usage_events
 WHERE event->>'gatewayId' = :'gateway' AND created_at >= :'since'::bigint ORDER BY created_at;
 `;
@@ -250,10 +267,31 @@ function requireBoundHome(deps, gatewayId) {
   if (phase !== "Bound") throw new Error(`${gatewayId}'s home claim is ${phase ?? "missing"}, not Bound`);
 }
 
+async function giveProject(deps, options, uid) {
+  const issued = deps.fleet(["user", "issue-passwords", options.user, "--apply"]).response;
+  const chat = await deps.signIn(issued.chat.username, issued.chat.password);
+  const api = await deps.platformApi(chat.token);
+  await api.post("/api/projects", { name: "Harbor", slug: PROJECT_SLUG });
+  const agentId = projectAgentId(options.user);
+  await waitFor(() => deps.sql(PROJECT_AGENT_STORE_SQL, { uid, agent: agentId }).trim() === options.gateway,
+    { timeoutMs: PROJECT_TIMEOUT_MS, intervalMs: 10_000, label: `${agentId}'s store to be recorded on ${options.gateway}` }, deps.clock);
+  deps.log(`Gave ${options.user} project ${PROJECT_SLUG}; ${agentId} has a store on ${options.gateway}`);
+  return agentId;
+}
+
+async function waitForDetachedAgent(deps, gatewayId, agentId) {
+  await waitFor(() => {
+    const config = deps.readGatewayFile(gatewayId, OPENCLAW_CONFIG);
+    return config !== null && !configuresAgent(config, agentId);
+  }, { timeoutMs: PROJECT_TIMEOUT_MS, intervalMs: 10_000, label: `${gatewayId} to detach archived project agent ${agentId}` }, deps.clock);
+  deps.log(`${gatewayId} detached archived project agent ${agentId}`);
+}
+
 export async function run(deps, options) {
   const { log } = deps;
   pinModel(deps, options);
-  await placeOnSharedGateway(deps, options);
+  const user = await placeOnSharedGateway(deps, options);
+  const project = { uid: user.id, agentId: await giveProject(deps, options, user.id) };
 
   deps.setSizingProfile(POD_SIZING_PROFILE, POD_PROFILE);
   log(`Set sizing profile ${POD_SIZING_PROFILE} to a pod with a ${POD_PROFILE.computer.homeSizeGiB} GiB home`);
@@ -264,13 +302,13 @@ export async function run(deps, options) {
   const operationId = migrationOperationId(given, giving);
   log(`Gave ${options.user} isolated gateway ${gatewayId} in migration ${operationId}`);
   try {
-    return await serveParkResumeAndRetire(deps, options, gatewayId, operationId);
+    return await serveParkResumeAndRetire(deps, options, gatewayId, operationId, project);
   } catch (error) {
     throw new Error(redactSecrets(`${error.message}\n${gatewayDiagnostics(deps, gatewayId)}`));
   }
 }
 
-async function serveParkResumeAndRetire(deps, options, gatewayId, operationId) {
+async function serveParkResumeAndRetire(deps, options, gatewayId, operationId, project) {
   const { log, clock } = deps;
   await waitForWorkspaceIdentities(deps, gatewayId);
   await waitForUserMount(deps, options, gatewayId);
@@ -278,6 +316,8 @@ async function serveParkResumeAndRetire(deps, options, gatewayId, operationId) {
   requireBoundHome(deps, gatewayId);
   const roundTrip = await coachRoundTrip(deps, options,
     { sql: GATEWAY_LEDGER_SQL, variables: { gateway: gatewayId }, caller: `isolated gateway ${gatewayId}` });
+  deps.sql(ARCHIVE_PROJECT_SQL, { uid: project.uid, project: PROJECT_SLUG });
+  log(`Archived ${options.user}'s project ${PROJECT_SLUG} while they are on ${gatewayId}`);
 
   const marker = `${gatewayId}-${clock.now()}`;
   deps.writeGatewayFile(gatewayId, HOME_MARKER, marker);
@@ -295,6 +335,7 @@ async function serveParkResumeAndRetire(deps, options, gatewayId, operationId) {
     throw new Error(`${gatewayId} lost its home across park and resume: ${HOME_MARKER} no longer holds what was written before park`);
   }
   log(`Resumed ${gatewayId} with its home intact`);
+  await waitForDetachedAgent(deps, gatewayId, project.agentId);
 
   const returning = deps.fleet(["user", "migrate", options.user, `--to=${options.gateway}`, "--apply"]).response;
   await waitForMigration(deps, migrationOperationId(returning, `user migrate --to=${options.gateway}`), options.gateway);
@@ -306,7 +347,7 @@ async function serveParkResumeAndRetire(deps, options, gatewayId, operationId) {
   deps.fleet(["gateway", "retire", gatewayId, "--apply"]);
   await waitFor(() => deps.gatewayPodCount(gatewayId) === 0 && deps.homeClaimPhase(gatewayId) === null,
     { timeoutMs: 600_000, intervalMs: 5_000, label: `${gatewayId}'s pod and home claim to be deleted after retire` }, clock);
-  log(`Returned ${options.user} to ${options.gateway} and retired ${gatewayId}; its home claim is gone`);
+  log(`Returned ${options.user} to ${options.gateway} with archived project agent ${project.agentId} and retired ${gatewayId}; its home claim is gone`);
   return { gatewayId, ...roundTrip };
 }
 

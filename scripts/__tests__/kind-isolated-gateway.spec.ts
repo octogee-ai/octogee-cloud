@@ -27,6 +27,8 @@ interface Scenario {
   kubernetes?: { pods?: unknown[]; events?: Array<{ involvedObject: { name: string } }>; networkPolicies?: unknown[] };
   migrationToIsolated?: Migration;
   migrationBack?: Migration;
+  projectStoreNeverRecorded?: boolean;
+  archivedAgentNeverDetached?: boolean;
 }
 
 interface Step { name: string; status: string; error?: unknown }
@@ -37,6 +39,8 @@ const MIGRATION_TO_ISOLATED = "op-to-isolated";
 const MIGRATION_BACK = "op-back";
 
 const RESUMED_PROCESS_STARTS_MS = 30_000;
+const CONFIG_FILE = "/home/node/.openclaw/openclaw.json";
+const PROJECT_AGENT = "octogee-lin-proj-harbor-coach";
 
 function cluster(scenario: Scenario = {}) {
   let now = 0;
@@ -53,6 +57,9 @@ function cluster(scenario: Scenario = {}) {
   const running = () => pods > 0 && now >= runningFrom;
   const home = new Map<string, string>();
   let sent = 0;
+  let projectCreated = false;
+  let archived = false;
+  let detached = false;
   const operations = new Map<string, { finishesAt: number; ends: NonNullable<Migration["ends"]> }>();
   const startMigration = (id: string, migration: Migration | undefined, defaultMs: number) => {
     operations.set(id, { finishesAt: now + (migration?.finishesAfterMs ?? defaultMs), ends: migration?.ends ?? SUCCEEDED });
@@ -70,6 +77,7 @@ function cluster(scenario: Scenario = {}) {
   const boot = (identityReady: boolean) => {
     boots += 1;
     pods = 1;
+    if (archived && !scenario.archivedAgentNeverDetached) detached = true;
     claim = "Bound";
     if (scenario.homeSurvives === false) home.clear();
     home.set(BOOT_FILE, `boot-${boots}`);
@@ -151,13 +159,33 @@ function cluster(scenario: Scenario = {}) {
     },
     sql: (query: string, variables: Record<string, string>) => {
       sql.push({ sql: query, variables });
+      if (query.includes("platform.agent_stores")) {
+        return projectCreated && !scenario.projectStoreNeverRecorded && variables.agent === PROJECT_AGENT ? "shared-a\n" : "";
+      }
+      if (query.includes("commercial_lifecycle_status = 'archived'")) {
+        events.push("archive project");
+        archived = true;
+        return "";
+      }
       if (query.includes("model_broker_usage_events")) {
         return JSON.stringify({ provider: "openrouter", model: "meta/muse-ember", gatewayId: ISOLATED, upstreamStatus: 200, totalTokens: 900, costUsd: 0.0001 });
       }
       return "";
     },
     waitForGatewayPod: () => "",
+    platformApi: async (token: string) => {
+      expect(token).toBe("chat-token");
+      return {
+        post: async (path: string, body: unknown) => {
+          events.push(`api post ${path}`);
+          expect(body).toEqual({ name: "Harbor", slug: "harbor" });
+          projectCreated = true;
+          return { workspaceId: "lin", slug: "harbor" };
+        },
+      };
+    },
     signIn: async () => ({
+      token: "chat-token",
       get: async (path: string) => {
         if (path === "/api/v4/users/username/lin-coach") return { id: BOT, username: "lin-coach" };
         if (path === "/api/v4/users/me/teams") return [{ id: "team-1" }];
@@ -178,6 +206,10 @@ function cluster(scenario: Scenario = {}) {
       settle();
       expect(gatewayId).toBe(ISOLATED);
       if (!running()) throw new Error(`container "gateway" of ${gatewayId} is not running`);
+      if (path === CONFIG_FILE) {
+        events.push("config read");
+        return JSON.stringify({ agents: { list: [{ id: "octogee-lin-coach" }, ...(detached ? [] : [{ id: PROJECT_AGENT }])] } });
+      }
       if (path === BOOT_FILE || path === READY_FILE) {
         events.push("identity read");
         if (scenario.markerReadError) throw new Error(scenario.markerReadError);
@@ -200,6 +232,12 @@ function cluster(scenario: Scenario = {}) {
   return { deps, events, sql };
 }
 
+function eventIndex(events: string[], prefix: string, from = 0) {
+  const index = events.findIndex((event, at) => at >= from && event.startsWith(prefix));
+  if (index < 0) throw new Error(`no ${prefix} event in ${events.join(" | ")}`);
+  return index;
+}
+
 const options = { fleet: "octogee-fleet", gateway: "shared-a", user: "lin", model: MODEL, replyTimeoutMs: 300_000, state: "/state/isolated" };
 
 describe("kind isolated gateway smoke", () => {
@@ -216,6 +254,38 @@ describe("kind isolated gateway smoke", () => {
       .toEqual([`gateway park ${ISOLATED}`, `gateway resume ${ISOLATED}`, `gateway retire ${ISOLATED}`]);
     expect(sql.find(entry => entry.sql.includes("model_broker_usage_events"))?.variables).toMatchObject({ gateway: ISOLATED });
     expect(result.evidence).toMatchObject({ calls: 1, provider: "openrouter", model: "meta/muse-ember" });
+  });
+
+  it("gives the user a project before the move to the isolated gateway, archives it there, and returns them only after the gateway detached its agent", async () => {
+    const { deps, events, sql } = cluster();
+
+    await run(deps, options);
+
+    const toIsolated = eventIndex(events, "user migrate lin");
+    expect(eventIndex(events, "api post /api/projects")).toBeLessThan(toIsolated);
+    const archivedAt = eventIndex(events, "archive project");
+    expect(archivedAt).toBeGreaterThan(eventIndex(events, "chat post"));
+    expect(archivedAt).toBeLessThan(eventIndex(events, `gateway park ${ISOLATED}`));
+    const back = eventIndex(events, "user migrate lin", toIsolated + 1);
+    expect(events.lastIndexOf("config read")).toBeGreaterThan(eventIndex(events, `gateway resume ${ISOLATED}`));
+    expect(events.lastIndexOf("config read")).toBeLessThan(back);
+    expect(sql.find(entry => entry.sql.includes("commercial_lifecycle_status"))?.variables).toEqual({ uid: "uid-1", project: "harbor" });
+    expect(sql.find(entry => entry.sql.includes("platform.agent_stores"))?.variables).toEqual({ uid: "uid-1", agent: PROJECT_AGENT });
+  });
+
+  it("does not give the user an isolated gateway before their project agent has a store on the shared gateway", async () => {
+    const { deps, events } = cluster({ projectStoreNeverRecorded: true });
+
+    await expect(run(deps, options)).rejects.toThrow(`waiting for ${PROJECT_AGENT}'s store to be recorded on shared-a`);
+    expect(events.some(event => event.startsWith("user migrate lin"))).toBe(false);
+  });
+
+  it("does not return the user while the isolated gateway still configures the archived project's agent", async () => {
+    const { deps, events } = cluster({ archivedAgentNeverDetached: true });
+
+    await expect(run(deps, options)).rejects.toThrow(`waiting for ${ISOLATED} to detach archived project agent ${PROJECT_AGENT}`);
+    expect(events.filter(event => event.startsWith("user migrate lin"))).toHaveLength(1);
+    expect(events).not.toContain(`gateway retire ${ISOLATED}`);
   });
 
   it("waits for each migration to succeed before the Coach round trip, the park and the retire, which the Admin API refuses while a migration is in flight", async () => {
