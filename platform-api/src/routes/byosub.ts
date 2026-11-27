@@ -12,7 +12,7 @@ import type {
   SubscriptionLinkStatus,
   UserActivationLease,
 } from "@octogee/core/platform-state";
-import { readSubscriptionIntegration, subscriptionIntegration } from "@octogee/core/model-credential-records";
+import { readSubscriptionIntegration } from "@octogee/core/model-credential-records";
 import {
   deleteSecret,
   writeSecret,
@@ -776,6 +776,10 @@ router.post(
   },
 );
 
+function isObservedAt(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 router.post(
   "/auth-state",
   requireInternalServiceAuth,
@@ -795,8 +799,7 @@ router.post(
         !isSafeAgentId(b.agentId) ||
         !entry ||
         b.state !== "needs_reauth" ||
-        typeof b.observedAt !== "number" ||
-        !Number.isFinite(b.observedAt)
+        !isObservedAt(b.observedAt)
       ) {
         res.status(400).json({
           error:
@@ -814,10 +817,9 @@ router.post(
         res.json({ ok: true, noop: true });
         return;
       }
-      const links = await platformStateStore.users.subscriptionLinks.list(assignedUid);
-      const providers = providerSetFromUserIntegration(subscriptionIntegration(links));
-      const link = links.find((candidate) => candidate.provider === provider);
-      if (!providers || !isConnectedProvider(providers, provider) || !link || link.updatedAt >= b.observedAt) {
+      const link = (await platformStateStore.users.subscriptionLinks.list(assignedUid))
+        .find((candidate) => candidate.provider === provider);
+      if (link?.status !== "connected" || link.updatedAt >= b.observedAt) {
         res.json({ ok: true, noop: true });
         return;
       }
