@@ -533,8 +533,9 @@ ${RECIPE_PUBLISH_CONTRACT[recipe]}.
 
 ## Defaults
 
-- Every merge ships. Main is not a storage shelf.
-- Preview before prod when the change changes behavior, copy, data, or layout.
+- Merged work is ready to publish. Main is not a storage shelf.
+- Every publish opens as a preview, and it goes live only after the owner
+  approves it.
 - The default public shape is Firebase Hosting on
   octogee-{workspaceSlug}-{projectSlug}.web.app.
 - Secrets belong in the Octogee platform, never in the repo, screenshots, or chat.
@@ -544,7 +545,8 @@ ${RECIPE_PUBLISH_CONTRACT[recipe]}.
 ## Before calling it shipped
 
 - The preview link opens.
-- The production link opens after merge.
+- The owner approved the preview.
+- The production link opens after approval.
 - The changed path is checked by a person.
 - The repo has enough context for the next session to continue without guessing.
 
