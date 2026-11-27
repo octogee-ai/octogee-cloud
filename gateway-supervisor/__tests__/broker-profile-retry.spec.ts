@@ -438,20 +438,74 @@ describe("broker profile retry (level-triggered)", () => {
     expect((await sweep()).settled).toBe(false);
   });
 
-  it("does not reload unchanged settled Shared profiles but reloads a changed assignment", async () => {
+  it("does not reload unchanged settled Shared profiles", async () => {
     seedAgentStore(agentsDir, AGENT);
     applyOutcome = "accept";
-    let assigned = ["alice"];
     const scoped = () => materializeDeferredBrokerProfiles(() => {}, {
-      agentsDir, readConfig, readAssignedSlugs: async () => assigned,
+      agentsDir, readConfig, readAssignedSlugs: async () => ["alice"],
       secretsApply: { apply }, secretsReload: { secretsReload: reload },
     });
     expect((await scoped()).settled).toBe(true);
     expect((await scoped()).settled).toBe(true);
     expect(reload).toHaveBeenCalledOnce();
-    assigned = ["alice", "bravo"];
-    expect((await scoped()).settled).toBe(true);
-    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  describe("a changed assignment after the profiles settled", () => {
+    const staged = "octogee-bravo-coach";
+    const stagedOwner = (): DegradedSecretOwner => ({
+      ownerKind: "account",
+      ownerId: JSON.stringify([path.join(agentsDir, staged, "agent", "openclaw-agent.sqlite"), "anthropic:default"]),
+      state: "unavailable", paths: ["profiles.anthropic:default.key"], reason: "secret provider failed",
+    });
+    let assigned: string[];
+    let owners: DegradedSecretOwner[];
+    let status: ReturnType<typeof vi.fn>;
+    const scoped = () => materializeDeferredBrokerProfiles((m) => logs.push(m), {
+      agentsDir,
+      readConfig: () => ({ agents: { entries: { [AGENT]: { model: "house" }, [staged]: { model: "house" } } } }),
+      readAssignedSlugs: async () => assigned,
+      secretsApply: { apply },
+      secretsReload: { secretsReload: reload, degradedSecretsStatus: status },
+    });
+
+    beforeEach(() => {
+      seedAgentStore(agentsDir, AGENT);
+      seedAgentStore(agentsDir, staged);
+      applyOutcome = "accept";
+      assigned = ["alice", "bravo"];
+      owners = [];
+      status = vi.fn(async () => owners);
+    });
+
+    it("settles from the gateway's degraded secret status without reloading every secret", async () => {
+      expect((await scoped()).settled).toBe(true);
+      expect(reload).toHaveBeenCalledOnce();
+      assigned = ["alice"];
+      owners = [stagedOwner()];
+      expect(await scoped()).toEqual({ settled: true, deferred: [] });
+      expect(reload).toHaveBeenCalledOnce();
+      expect(status).toHaveBeenCalled();
+      expect(logs.some((m) => m.includes("no blocking owners"))).toBe(true);
+    });
+
+    it("reloads the secret snapshot when the status shows an owner the new assignment serves", async () => {
+      expect((await scoped()).settled).toBe(true);
+      expect(reload).toHaveBeenCalledOnce();
+      assigned = ["alice"];
+      owners = [{ ...stagedOwner(), ownerKind: "capability", ownerId: `memory-provider:${AGENT}` }];
+      reload.mockResolvedValue({ ok: true, warningCount: 1 });
+      expect((await scoped()).settled).toBe(false);
+      expect(reload).toHaveBeenCalledTimes(2);
+    });
+
+    it("still reloads the secret snapshot when this sweep materialized a profile", async () => {
+      assigned = ["alice"];
+      expect((await scoped()).settled).toBe(true);
+      expect(reload).toHaveBeenCalledOnce();
+      assigned = ["alice", "bravo"];
+      expect((await scoped()).settled).toBe(true);
+      expect(reload).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("recognizes the four staged project owners observed in c0 status", () => {
