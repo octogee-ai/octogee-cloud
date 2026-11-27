@@ -58,7 +58,10 @@ and never import another service component's files or package; specs under
 `core`, `core-testing` and `shared` commit their built `dist/`. Other packages
 install them as `file:` dependencies, so build and commit `dist/` with any
 change to their source. The OpenClaw build the gateway image uses is pinned in
-`gateway/openclaw-tarball/current.json`.
+`gateway/openclaw-tarball/current.json`. A refresh of that build follows
+[its README](gateway/openclaw-tarball/README.md#refresh-a-tag-or-selected-main-snapshot)
+and carries every retained patch it lists; a refresh that drops one without
+recorded evidence has failed.
 
 `gateway-edge` and `llm-broker` do not commit `dist/`. Their `exports` maps
 list every module another package may import. Build them before installing a

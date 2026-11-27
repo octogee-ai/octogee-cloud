@@ -35,6 +35,11 @@ canonical recut, not a parallel runtime update path.
    checking each changed boundary. Do not chase a moving tip during the build. Drop
    adopted behavior, unused capabilities and optimizations that change upstream
    correctness. Use native owners when files or APIs move.
+   Carry every retained patch in the assessment below, including the
+   [retained diagnostics](#retained-failure-diagnostics). Compare the rebased
+   series with the previous one (`git range-diff <previous-upstream-base>..<previous-overlay>
+   "$UPSTREAM_SHA"..<overlay-branch>`). A patch missing from the result fails the
+   refresh unless this README records its removal and the evidence for it.
 3. Test affected behavior, with a failing control for new bugs; run applicable
    native type, lint, generated-output and package checks. Reuse upstream
    coverage instead of copying whole suites. Keep real resource/authorization
@@ -211,6 +216,65 @@ CI. After merge, Build main produces images, not a deployment. Environment
 selection and rollout are a separate operator step.
 
 ## Current Gateway overlay
+
+### Retained failure diagnostics
+
+Two overlay commits make two failures name their own cause. They follow the
+Mattermost session title commit on the fork's
+`fix/mattermost-session-display-name` branch, whose tip is
+`22920c164d44ff5bea8a5d724bcee7167caaa69f`. The next refresh carries and packs
+them; the pinned build `9fb9c7dc` does not contain them.
+
+- **SQLite worker path.** A shared gateway's config reload failed with
+  `SQLite worker database path must identify a regular file` and nothing else.
+  The check follows symbolic links and treats a missing file as absent, so the
+  path existed and resolved to a directory, FIFO, socket or device. The message
+  named neither the path nor what it found, and a shared gateway opens many
+  agent databases. The message now keeps that sentence and adds the resolved
+  path and the entry found, for example `: <path> (found directory)` or
+  `(found symbolic link to directory)`. Files: `src/infra/sqlite-worker-identity.ts`
+  (all three throws), `src/infra/sqlite-worker-broker-admission.ts` and
+  `src/agents/auth-profiles/usage-write.ts`.
+- **Config reload failure log.** `config reload failed:` logged
+  `String(error)` only, with no stack or cause. It now keeps that first line and
+  adds the stack frames and a `Caused by:` line, the shape other gateway failure
+  logs use. Files: `src/gateway/config-reload-candidates.ts` and
+  `src/gateway/config-reload.ts`. Tests that matched the whole line now match
+  its first line through `configReloadFailureLine` in
+  `src/gateway/test-helpers.assertions.ts`.
+
+There is no native path: upstream raises both errors without the path or the
+stack, and no configuration or plugin API changes what core logs. A path can
+include the state directory and an agent id, which can carry a user's slug, so
+the line belongs in operator logs only.
+
+After a recut, check the source and run the tests:
+
+```bash
+git grep -n createNonRegularDatabasePathError -- src/infra src/agents
+git grep -n formatConfigReloadFailure -- src/gateway
+node scripts/run-vitest.mjs run src/infra/sqlite-worker-identity.test.ts
+node scripts/run-vitest.mjs run src/gateway/config-reload-candidates.test.ts
+```
+
+The first command must find the three identity throws, the broker admission
+throw and the usage write throw. The identity test must expect the path and
+`(found directory)`. The reload test must expect stack frames and `Caused by:`
+after the first line.
+
+On a gateway, the failure now logs `config reload failed: Error: SQLite worker
+database path must identify a regular file: <path> (found <entry>)` followed by
+`at` frames. If it recurs, read the path from that line and inspect it before
+replacing the pod, without changing anything:
+
+```bash
+kubectl -n <namespace> exec <pod> -c gateway -- sh -c \
+  'find -L "${OPENCLAW_STATE_DIR:-$HOME/.openclaw}" -name "*.sqlite*" ! -type f -exec ls -ld {} +'
+```
+
+Record what the path held, then replace the pod. Remove each diagnostic once
+the selected base names the path, or logs the stack and cause of a reload
+failure, natively.
 
 ### November 25 Mattermost channel session titles
 

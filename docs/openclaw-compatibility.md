@@ -60,6 +60,7 @@ the overlay.
 | Final-reply notification flag | Activity view in the hosted app | No pull request |
 | Dashboard participant labels | Shows who said what in the embedded dashboard | No pull request |
 | `doctor --skip-recovery-backups` | Store import and upgrade paths that already keep their own backups | No pull request |
+| SQLite worker path and config reload failure diagnostics | Name the path behind a non-regular database file, and log a failed reload's stack and cause | No pull request |
 | npm 12.2.1 distribution patch | Packaging: dependency fixes that upstream npm does not ship yet | Not an OpenClaw change |
 | Generated schemas and test support | Describe the retained APIs above | Go with their features |
 
