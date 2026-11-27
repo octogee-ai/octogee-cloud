@@ -323,29 +323,40 @@ function gatewayClientRun(ctx: PluginHookContext): boolean {
     ctx.accountId === undefined;
 }
 
+function sessionConversation(ctx: PluginHookContext): { agentId: string; channelId: string } | null {
+  if (typeof ctx.sessionKey !== "string" || typeof ctx.agentId !== "string") return null;
+  const [, agentId, channelId, threadRootId] = BOUND_CONVERSATION_SESSION.exec(ctx.sessionKey) ?? [];
+  if (!agentId || !channelId || agentId !== ctx.agentId) return null;
+  const sessionChatId = threadRootId ? `${channelId}:thread:${threadRootId}` : channelId;
+  return ctx.chatId === sessionChatId ? { agentId, channelId } : null;
+}
+
+function boundGroupAccount(entry: unknown, agentId: string, channelId: string): string | null {
+  const binding = eventRecord(entry);
+  const match = eventRecord(binding.match);
+  const peer = eventRecord(match.peer);
+  if (binding.agentId !== agentId || match.channel !== "mattermost") return null;
+  if (peer.kind !== "group" || peer.id !== channelId) return null;
+  return typeof match.accountId === "string" && match.accountId.length > 0 ? match.accountId : null;
+}
+
+function soleBoundAccount(bindings: unknown, agentId: string, channelId: string): string | null {
+  const accounts = new Set(
+    (Array.isArray(bindings) ? bindings : [])
+      .map((entry) => boundGroupAccount(entry, agentId, channelId))
+      .filter((accountId): accountId is string => accountId !== null),
+  );
+  return accounts.size === 1 ? [...accounts][0]! : null;
+}
+
 function boundConversationIdentity(
   ctx: PluginHookContext,
   bindings: unknown,
 ): { agentId: string; accountId: string; channelId: string } | null {
-  if (typeof ctx.sessionKey !== "string" || typeof ctx.agentId !== "string") return null;
-  const session = BOUND_CONVERSATION_SESSION.exec(ctx.sessionKey);
-  const [, sessionAgentId, channelId, threadRootId] = session ?? [];
-  if (!sessionAgentId || !channelId || sessionAgentId !== ctx.agentId) return null;
-  const sessionChatId = threadRootId ? `${channelId}:thread:${threadRootId}` : channelId;
-  if (ctx.chatId !== sessionChatId) return null;
-  const accounts = new Set<string>();
-  for (const entry of Array.isArray(bindings) ? bindings : []) {
-    const binding = eventRecord(entry);
-    const match = eventRecord(binding.match);
-    const peer = eventRecord(match.peer);
-    if (binding.agentId === sessionAgentId && match.channel === "mattermost" && typeof match.accountId === "string" &&
-        match.accountId.length > 0 && peer.kind === "group" && peer.id === channelId) {
-      accounts.add(match.accountId);
-    }
-  }
-  if (accounts.size !== 1) return null;
-  const [accountId] = accounts;
-  return { agentId: sessionAgentId, accountId: accountId!, channelId };
+  const conversation = sessionConversation(ctx);
+  if (!conversation) return null;
+  const accountId = soleBoundAccount(bindings, conversation.agentId, conversation.channelId);
+  return accountId ? { ...conversation, accountId } : null;
 }
 
 async function verifiedRun(
