@@ -7,6 +7,8 @@ import { queryAgentStore, readPostgresAgentAnchor } from "@octogee/core/agent-po
 import type { FleetBrokerAgentAnchor, FleetBrokerAgentAnchorMigration, FleetBrokerGatewayStateAnchor, FleetBrokerAuxiliaryAnchor } from "@octogee/shared/types/fleet-broker";
 import { localStateStorePath } from "./openclaw-state-store.js";
 import type { FleetBrokerClient } from "./fleet-broker-client.js";
+import { agentIdBelongsToSlug } from "@octogee/shared/types/agent-models";
+import { parseAgentId } from "@octogee/shared/types/identity";
 
 const AGENT_STORE_BASENAME = "openclaw-agent.sqlite";
 const STORE_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -95,6 +97,46 @@ export async function landAgentAnchors(
   return { landed, preserved };
 }
 
+async function storeFileExists(stateDir: string, agentId: string): Promise<boolean> {
+  return fs.lstat(agentStorePath(stateDir, agentId)).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  });
+}
+
+export async function rebuildArchivedAgentFolders(input: {
+  stateDir: string;
+  slug: string;
+  archivedAgentIds: ReadonlySet<string>;
+  recorded: readonly FleetBrokerAgentAnchor[];
+  verify?: AgentAnchorVerifier;
+  log: (message: string) => void;
+}): Promise<{ rebuilt: string[]; refused: { agentId: string; reason: string }[] }> {
+  const verify = input.verify ?? verifyAgentAnchorInPostgres;
+  const rebuilt: string[] = [];
+  const refused: { agentId: string; reason: string }[] = [];
+  for (const anchor of input.recorded) {
+    if (!input.archivedAgentIds.has(anchor.agentId)) continue;
+    if (!isAgentAnchor(anchor) || !agentIdBelongsToSlug(anchor.agentId, input.slug) || parseAgentId(anchor.agentId).kind !== "project") {
+      refused.push({ agentId: anchor.agentId, reason: "the recorded anchor is not an archived project agent of this user" });
+      continue;
+    }
+    if (await storeFileExists(input.stateDir, anchor.agentId)) continue;
+    try {
+      await verify(anchor);
+    } catch (error) {
+      refused.push({ agentId: anchor.agentId, reason: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    if (await publishAnchor(agentStorePath(input.stateDir, anchor.agentId), anchor)) rebuilt.push(anchor.agentId);
+  }
+  for (const agentId of rebuilt) input.log(`[agent-anchors] rebuilt archived project agent folder from its PostgreSQL store agentId=${agentId}`);
+  for (const { agentId, reason } of refused) {
+    input.log(`🔴 [agent-anchors] archived project agent folder not rebuilt agentId=${agentId}: ${reason}`);
+  }
+  return { rebuilt, refused };
+}
+
 interface SharedUserAgentAnchorsInput {
   stateDir: string;
   uid?: string;
@@ -104,6 +146,7 @@ interface SharedUserAgentAnchorsInput {
   allowQuiescingExisting?: boolean;
   sharedTargetWorkspace?: MigrationTargetIdentityCustody | null;
   sourceResume?: MigrationSourceIdentityCustody;
+  archived?: { agentIds: ReadonlySet<string>; log: (message: string) => void };
   broker: Pick<FleetBrokerClient, "readAgentAnchors" | "reportAgentAnchors">;
 }
 
@@ -170,6 +213,17 @@ function sourceRollbackRetainsRoster(
   return localCount === agentCount && recordedCount === agentCount;
 }
 
+async function rebuildMountedArchivedAgentFolders(
+  input: SharedUserAgentAnchorsInput,
+  configuredAgentIds: readonly string[],
+  recorded: readonly FleetBrokerAgentAnchor[],
+  assignmentState: string,
+): Promise<void> {
+  if (!input.archived || input.migrationId || assignmentState !== "serving") return;
+  const archivedAgentIds = new Set([...input.archived.agentIds].filter(agentId => !configuredAgentIds.includes(agentId)));
+  await rebuildArchivedAgentFolders({ stateDir: input.stateDir, slug: input.slug, archivedAgentIds, recorded, log: input.archived.log });
+}
+
 export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchorsInput): Promise<{
   report: () => Promise<void>;
   retainedSharedRoster?: FleetBrokerAgentAnchor[];
@@ -215,6 +269,7 @@ export async function prepareSharedUserAgentAnchors(input: SharedUserAgentAnchor
     await verifyAgentAnchorInPostgres(anchor);
   }
   if (!quiescingExisting) await landAgentAnchors(stateDir, expected);
+  await rebuildMountedArchivedAgentFolders(input, agentIds, recorded.anchors, assignmentState);
   await assertRecordedIdentities();
   const report = async () => {
     const anchors = await assertRecordedIdentities();
