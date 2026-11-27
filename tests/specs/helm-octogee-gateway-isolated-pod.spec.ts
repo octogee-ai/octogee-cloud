@@ -250,6 +250,33 @@ describe("charts/octogee-gateway/ — isolated gateway as a Kubernetes pod", () 
     );
   });
 
+  it.each(["4", "6"])("requests enough ephemeral storage for a %sGi ephemeral home, the cache and tmp all full", (ephemeralHomeGiB) => {
+    const pod = renderDeployment({ ephemeralHomeGiB }).deployment.spec.template.spec;
+    const gib = (quantity: string) => {
+      const match = /^(\d+)Gi$/.exec(quantity);
+      if (!match) throw new Error(`unexpected quantity ${quantity}`);
+      return Number(match[1]);
+    };
+    const diskBackedGiB = pod.volumes
+      .filter((volume) => volume.emptyDir && (volume.emptyDir as { medium?: string }).medium !== "Memory")
+      .reduce((total, volume) => total + gib(volume.emptyDir!.sizeLimit!), 0);
+    expect(diskBackedGiB).toBe(Number(ephemeralHomeGiB) + 3);
+    const gateway = pod.containers.find((entry) => entry.name === "gateway")!;
+    expect(gateway.resources!.requests["ephemeral-storage"]).toBe(`${diskBackedGiB}Gi`);
+    expect(gateway.resources!.limits["ephemeral-storage"]).toBe(`${diskBackedGiB}Gi`);
+    const autopilotDefaultGiB = 1;
+    const podLimitGiB = pod.containers.reduce(
+      (total, entry) => total + (entry.resources?.limits?.["ephemeral-storage"] ? gib(entry.resources.limits["ephemeral-storage"]) : autopilotDefaultGiB),
+      0,
+    );
+    expect(podLimitGiB).toBeGreaterThan(diskBackedGiB);
+    expect(podLimitGiB).toBeLessThanOrEqual(10);
+  });
+
+  it("refuses an ephemeral home too large for Autopilot's 10Gi pod ephemeral storage ceiling", () => {
+    expect(renderFailure({ ephemeralHomeGiB: "7" })).toMatch(/ephemeral home of 7Gi plus cache and tmp needs 10Gi/);
+  });
+
   it("tells the gateway and its edge that they run in the cluster with no desktop", () => {
     const { deployment } = renderDeployment();
     expect(container(deployment, "gateway-edge").lifecycle?.preStop).toBeUndefined();
