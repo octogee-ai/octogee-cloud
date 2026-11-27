@@ -366,6 +366,17 @@ export async function brokerPushByosubCred(agentId, provider, credential) {
     }
     return { changed: data.changed, destroyed: data.destroyed };
 }
+export async function brokerSignalSubscriptionNeedsReauth(rejection) {
+    const r = await internalFetch(`${byokBrokerBaseUrl()}/api/model-credentials/subscription/auth-state`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...rejection, state: "needs_reauth" }),
+    }, { requireProjectedToken: true });
+    if (!r.ok) {
+        const body = (await r.text().catch(() => "")).slice(0, 200);
+        throw new Error(`subscription auth-state ${r.status} ${body}`);
+    }
+}
 export async function brokerFetchByosubCreds(agentId) {
     const r = await internalFetch(`${byokBrokerBaseUrl()}/internal/byok/byosub-cred`, {
         method: "POST",

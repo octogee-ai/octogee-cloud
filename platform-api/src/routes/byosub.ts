@@ -776,6 +776,10 @@ router.post(
   },
 );
 
+function isObservedAt(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 router.post(
   "/auth-state",
   requireInternalServiceAuth,
@@ -786,6 +790,7 @@ router.post(
         agentId?: string;
         provider?: string;
         state?: string;
+        observedAt?: unknown;
       };
       const entry = providerEntryFromSubscriptionProvider(b.provider);
       if (
@@ -793,11 +798,12 @@ router.post(
         !b.agentId ||
         !isSafeAgentId(b.agentId) ||
         !entry ||
-        b.state !== "needs_reauth"
+        b.state !== "needs_reauth" ||
+        !isObservedAt(b.observedAt)
       ) {
         res.status(400).json({
           error:
-            "path-safe gatewayId, path-safe agentId, supported provider, state:'needs_reauth' required",
+            "path-safe gatewayId, path-safe agentId, supported provider, state:'needs_reauth', numeric observedAt required",
         });
         return;
       }
@@ -811,9 +817,9 @@ router.post(
         res.json({ ok: true, noop: true });
         return;
       }
-      const integration = await readSubscriptionIntegration(platformStateStore.users, assignedUid);
-      const providers = providerSetFromUserIntegration(integration);
-      if (!providers || !isConnectedProvider(providers, provider)) {
+      const link = (await platformStateStore.users.subscriptionLinks.list(assignedUid))
+        .find((candidate) => candidate.provider === provider);
+      if (link?.status !== "connected" || link.updatedAt >= b.observedAt) {
         res.json({ ok: true, noop: true });
         return;
       }

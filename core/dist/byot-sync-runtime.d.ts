@@ -43,6 +43,12 @@ export declare function brokerPushByosubCred(agentId: string, provider: ByosubPr
     changed: boolean;
     destroyed: number;
 }>;
+export declare function brokerSignalSubscriptionNeedsReauth(rejection: {
+    gatewayId: string;
+    agentId: string;
+    provider: ByosubProvider;
+    observedAt: number;
+}): Promise<void>;
 export declare function brokerFetchByosubCreds(agentId: string): Promise<ByosubCred[] | null>;
 export interface RuntimeRegistryPatchResult {
     patched: boolean;

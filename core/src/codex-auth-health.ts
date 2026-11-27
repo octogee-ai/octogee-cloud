@@ -34,43 +34,67 @@ export function deriveCodexAuthHealth(
   return "needs_reauth";
 }
 
-export async function checkCodexAuthHealthForAgents(opts: {
-  agentIds: string[];
+function rejectedAt(
+  authStateText: string | null,
+  profileId: string,
+): number | null {
+  if (authStateText === null) return null;
+  const parsed: unknown = JSON.parse(authStateText);
+  const stats = isRecord(parsed) && isRecord(parsed.usageStats)
+    ? parsed.usageStats[profileId]
+    : undefined;
+  const at = isRecord(stats) ? stats.lastFailureAt : undefined;
+  return typeof at === "number" && Number.isFinite(at) ? at : null;
+}
+
+export interface SubscriptionAuthTarget {
+  agentId: string;
+  provider: "openai" | "anthropic";
   profileId: string;
+  readAuthState: () => Promise<string | null>;
+}
+
+export interface SubscriptionAuthRejection {
+  agentId: string;
+  provider: SubscriptionAuthTarget["provider"];
+  observedAt: number;
+}
+
+export async function checkSubscriptionAuthHealth(opts: {
+  targets: readonly SubscriptionAuthTarget[];
   now: number;
-  
-  readAuthState: (agentId: string) => string | null;
-  
-  signalNeedsReauth: (agentId: string) => Promise<void>;
+  signalNeedsReauth: (rejection: SubscriptionAuthRejection) => Promise<void>;
   logFn?: (m: string) => void;
 }): Promise<{ checked: number; needsReauth: number; signalled: number }> {
   const log = opts.logFn ?? (() => {});
   let checked = 0;
   let needsReauth = 0;
   let signalled = 0;
-  for (const agentId of opts.agentIds) {
+  for (const target of opts.targets) {
+    const label = `${target.agentId} ${target.provider}`;
     let stateText: string | null;
     try {
-      stateText = opts.readAuthState(agentId);
+      stateText = await target.readAuthState();
     } catch (e) {
-      log(
-        `codex-auth-health: WARN read failed for ${agentId} — ${(e as Error).message}`,
-      );
+      log(`subscription-auth-health: WARN read failed for ${label} — ${(e as Error).message}`);
       continue;
     }
     checked++;
-    if (deriveCodexAuthHealth(stateText, opts.profileId, opts.now) !== "needs_reauth") {
+    if (deriveCodexAuthHealth(stateText, target.profileId, opts.now) !== "needs_reauth") {
       continue;
     }
     needsReauth++;
+    const observedAt = rejectedAt(stateText, target.profileId);
+    if (observedAt === null) {
+      log(`subscription-auth-health: WARN ${label} login rejected without a lastFailureAt; not signalled`);
+      continue;
+    }
     try {
-      await opts.signalNeedsReauth(agentId);
+      await opts.signalNeedsReauth({ agentId: target.agentId, provider: target.provider, observedAt });
       signalled++;
-      log(`codex-auth-health: ${agentId} codex auth dead — signalled needs_reauth`);
+      log(`subscription-auth-health: ${label} login rejected — signalled needs_reauth`);
     } catch (e) {
-      log(
-        `codex-auth-health: WARN signal failed for ${agentId} — ${(e as Error).message}`,
-      );
+      log(`subscription-auth-health: WARN signal failed for ${label} — ${(e as Error).message}`);
     }
   }
   return { checked, needsReauth, signalled };
