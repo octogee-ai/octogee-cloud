@@ -593,7 +593,7 @@ async function releaseSource(state, deps, migrationId) {
     const error = await confirmRelease(deps, "rollback:resume-ingress", () => deps.client.resume({ migrationId, gatewayId: state.fromGatewayId, slug: state.slug }));
     return error ? `source ingress on ${state.fromGatewayId} not resumed: ${error}` : null;
 }
-const TARGET_HOLDS_STORES_DURING_ROLLBACK = new Set(["source-flushed", "final-synced", "target-verified", "cutover-done"]);
+const TARGET_HOLDS_STORES_DURING_ROLLBACK = new Set(["source-flushed", "final-synced", "target-verified"]);
 const RETURN_SOURCE_STORES = "rollback:return-source-stores";
 async function returnSourceStores(state, deps) {
     if (!TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase) || !deps.prepareRollbackSource)
@@ -632,7 +632,7 @@ async function tryRollback(state, deps, migrationId, transports) {
         await report(deps, { name: rbName, status: "running" });
         try {
             if (step.action === "unmount-gateway" && step.role === "target" &&
-                ["source-flushed", "final-synced", "target-verified"].includes(state.phase)) {
+                TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase)) {
                 await deps.prepareRollbackTarget?.(step.gateway, step.slug);
             }
             await executeStep({

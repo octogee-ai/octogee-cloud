@@ -867,7 +867,7 @@ async function releaseSource(
 }
 
 const TARGET_HOLDS_STORES_DURING_ROLLBACK: ReadonlySet<MigrationPhase> =
-  new Set(["source-flushed", "final-synced", "target-verified", "cutover-done"]);
+  new Set(["source-flushed", "final-synced", "target-verified"]);
 const RETURN_SOURCE_STORES = "rollback:return-source-stores";
 
 async function returnSourceStores(state: MigrationState, deps: MigrationRunnerDeps): Promise<string | null> {
@@ -914,7 +914,7 @@ async function tryRollback(
     await report(deps, { name: rbName, status: "running" });
     try {
       if (step.action === "unmount-gateway" && step.role === "target" &&
-          ["source-flushed", "final-synced", "target-verified"].includes(state.phase)) {
+          TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase)) {
         await deps.prepareRollbackTarget?.(step.gateway, step.slug);
       }
       await executeStep({

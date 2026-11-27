@@ -985,7 +985,7 @@ describe("rollback releases the source", () => {
 });
 
 describe("rollback agent-store custody", () => {
-  function custodyHarness(failAt: "final" | "verify") {
+  function custodyHarness(failAt: "final" | "verify" | "cutover") {
     const h = harness({ gateAssignment: true });
     h.deps.wait = async () => undefined;
     const order: string[] = [];
@@ -995,8 +995,10 @@ describe("rollback agent-store custody", () => {
         if (mode === "final") throw new Error("Timed out waiting for an OpenClaw runtime update");
         return { migrationId: "m1", slug, imported: true };
       });
-    } else {
+    } else if (failAt === "verify") {
       vi.mocked(h.client.verifyTarget).mockRejectedValue(new Error("target coach is not wired"));
+    } else {
+      vi.mocked(h.deps.commitCutover).mockRejectedValue(new Error("cutover commit refused"));
     }
     h.deps.prepareRollbackTarget = vi.fn(async (gatewayId) => { owner = gatewayId; order.push(`stores:${gatewayId}`); });
     h.deps.prepareRollbackSource = vi.fn(async (gatewayId) => { owner = gatewayId; order.push(`stores:${gatewayId}`); });
@@ -1011,7 +1013,7 @@ describe("rollback agent-store custody", () => {
     return { ...h, order };
   }
 
-  it.each(["final", "verify"] as const)("hands the stores back to the source before it resumes after a failed %s step", async (failAt) => {
+  it.each(["final", "verify", "cutover"] as const)("hands the stores back to the source before it resumes after a failed %s step", async (failAt) => {
     const h = custodyHarness(failAt);
 
     expect(await runMigration(h.input, h.deps)).toMatchObject({ success: false, rolledBack: true });
@@ -1033,6 +1035,19 @@ describe("rollback agent-store custody", () => {
     expect(h.client.resume).not.toHaveBeenCalled();
     expect(h.events).toContain("report:rollback:return-source-stores:failed");
     expect(h.assignmentWrites.at(-1)).toMatchObject({ state: "quiescing" });
+  });
+
+  it("leaves store custody with the target once a post-cutover source cleanup fails", async () => {
+    const h = harness({ gateAssignment: true });
+    h.deps.prepareRollbackTarget = vi.fn(async () => undefined);
+    h.deps.prepareRollbackSource = vi.fn(async () => undefined);
+    vi.mocked(h.client.unmount).mockRejectedValue(new Error("source detach incomplete"));
+
+    expect(await runMigration(h.input, h.deps)).toMatchObject({ rolledBack: false });
+
+    expect(h.deps.prepareRollbackTarget).not.toHaveBeenCalled();
+    expect(h.deps.prepareRollbackSource).not.toHaveBeenCalled();
+    expect(h.client.resume).not.toHaveBeenCalled();
   });
 
   it("leaves store custody alone when the target never received the stores", async () => {
