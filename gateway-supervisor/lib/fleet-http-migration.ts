@@ -1497,7 +1497,8 @@ async function sharedSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsy
   return [...files, ...agents];
 }
 
-async function assertSharedSourceHoldsAuthorizedAgents(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody): Promise<void> {
+async function assertSharedSourceHoldsAuthorizedAgents(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode): Promise<void> {
+  if (mode !== "pre" || deps.adapter.isIsolatedGateway?.() !== false) return;
   const readAnchors = deps.adapter.sourceMigrationAgentAnchors;
   if (!readAnchors) throw new Error("Shared source export requires current migration anchor authority");
   const authority = await readAnchors(body.slug, body.migrationId);
@@ -1511,7 +1512,7 @@ async function assertSharedSourceHoldsAuthorizedAgents(deps: MigrationHandlerDep
 }
 
 async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode, signal: AbortSignal) {
-  if (mode === "pre" && deps.adapter.isIsolatedGateway?.() === false) await assertSharedSourceHoldsAuthorizedAgents(deps, body);
+  await assertSharedSourceHoldsAuthorizedAgents(deps, body, mode);
   const sourceHeld = mode === "final" && await deps.surgeSourceOpenClawHeld?.({ migrationId: body.migrationId, slug: body.slug }) === true;
   const retainedManifest = mode === "final" ? await readActivationManifest(OPENCLAW_DIR, body.slug).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
