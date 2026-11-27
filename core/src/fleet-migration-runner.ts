@@ -41,6 +41,7 @@ export interface MigrationRunnerDeps {
   commitCutover: (commit: CutoverCommit) => Promise<void>;
   readCurrentGateway?: () => Promise<string | null>;
   prepareRollbackTarget?: (gatewayId: string, slug: string) => Promise<void>;
+  prepareRollbackSource?: (gatewayId: string, slug: string) => Promise<void>;
 
   // Roster-state gate: written to "quiescing" on the SOURCE assignment before
   // the quiesce RPC — blocking the source edge from serving this user
@@ -865,6 +866,25 @@ async function releaseSource(
   return error ? `source ingress on ${state.fromGatewayId} not resumed: ${error}` : null;
 }
 
+const TARGET_HOLDS_STORES_DURING_ROLLBACK: ReadonlySet<MigrationPhase> =
+  new Set(["source-flushed", "final-synced", "target-verified"]);
+const RETURN_SOURCE_STORES = "rollback:return-source-stores";
+
+async function returnSourceStores(state: MigrationState, deps: MigrationRunnerDeps): Promise<string | null> {
+  if (!TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase) || !deps.prepareRollbackSource) return null;
+  await report(deps, { name: RETURN_SOURCE_STORES, status: "running" });
+  try {
+    await deps.prepareRollbackSource(state.fromGatewayId, state.slug);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    await report(deps, { name: RETURN_SOURCE_STORES, status: "failed", error: msg });
+    deps.log(`[migration-runner] ⚠ rollback warn: agent stores not returned to ${state.fromGatewayId}: ${msg}`);
+    return `${RETURN_SOURCE_STORES}: ${msg}`;
+  }
+  await report(deps, { name: RETURN_SOURCE_STORES, status: "done" });
+  return null;
+}
+
 async function tryRollback(
   state: MigrationState,
   deps: MigrationRunnerDeps,
@@ -894,7 +914,7 @@ async function tryRollback(
     await report(deps, { name: rbName, status: "running" });
     try {
       if (step.action === "unmount-gateway" && step.role === "target" &&
-          ["source-flushed", "final-synced", "target-verified"].includes(state.phase)) {
+          TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase)) {
         await deps.prepareRollbackTarget?.(step.gateway, step.slug);
       }
       await executeStep({
@@ -921,6 +941,8 @@ async function tryRollback(
     }
   }
   if (failures.length > 0) return { rolledBack: false, error: failures.join("; ") };
+  const unreturned = await returnSourceStores(state, deps);
+  if (unreturned) return { rolledBack: false, error: unreturned };
   if (transports.quiesceStarted) {
     const unreleased = await releaseSource(state, deps, migrationId);
     if (unreleased) return { rolledBack: false, error: unreleased };

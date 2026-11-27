@@ -593,6 +593,24 @@ async function releaseSource(state, deps, migrationId) {
     const error = await confirmRelease(deps, "rollback:resume-ingress", () => deps.client.resume({ migrationId, gatewayId: state.fromGatewayId, slug: state.slug }));
     return error ? `source ingress on ${state.fromGatewayId} not resumed: ${error}` : null;
 }
+const TARGET_HOLDS_STORES_DURING_ROLLBACK = new Set(["source-flushed", "final-synced", "target-verified"]);
+const RETURN_SOURCE_STORES = "rollback:return-source-stores";
+async function returnSourceStores(state, deps) {
+    if (!TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase) || !deps.prepareRollbackSource)
+        return null;
+    await report(deps, { name: RETURN_SOURCE_STORES, status: "running" });
+    try {
+        await deps.prepareRollbackSource(state.fromGatewayId, state.slug);
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        await report(deps, { name: RETURN_SOURCE_STORES, status: "failed", error: msg });
+        deps.log(`[migration-runner] ⚠ rollback warn: agent stores not returned to ${state.fromGatewayId}: ${msg}`);
+        return `${RETURN_SOURCE_STORES}: ${msg}`;
+    }
+    await report(deps, { name: RETURN_SOURCE_STORES, status: "done" });
+    return null;
+}
 async function tryRollback(state, deps, migrationId, transports) {
     let plan;
     try {
@@ -614,7 +632,7 @@ async function tryRollback(state, deps, migrationId, transports) {
         await report(deps, { name: rbName, status: "running" });
         try {
             if (step.action === "unmount-gateway" && step.role === "target" &&
-                ["source-flushed", "final-synced", "target-verified"].includes(state.phase)) {
+                TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase)) {
                 await deps.prepareRollbackTarget?.(step.gateway, step.slug);
             }
             await executeStep({
@@ -643,6 +661,9 @@ async function tryRollback(state, deps, migrationId, transports) {
     }
     if (failures.length > 0)
         return { rolledBack: false, error: failures.join("; ") };
+    const unreturned = await returnSourceStores(state, deps);
+    if (unreturned)
+        return { rolledBack: false, error: unreturned };
     if (transports.quiesceStarted) {
         const unreleased = await releaseSource(state, deps, migrationId);
         if (unreleased)

@@ -731,6 +731,11 @@ function buildRunnerDeps(
       await ctx.assertActiveClaim();
       await deps.prepareMigrationAgentStores(gatewayId, slug, { expectedUserUid: input.uid, assertCurrent: ctx.assertActiveClaim });
     },
+    prepareRollbackSource: async (gatewayId, slug) => {
+      if (!deps.prepareMigrationAgentStores || !ctx.assertActiveClaim) throw new Error("Source resume requires claimed agent-store ownership preparation");
+      await ctx.assertActiveClaim();
+      await deps.prepareMigrationAgentStores(gatewayId, slug, { expectedUserUid: input.uid, assertCurrent: ctx.assertActiveClaim });
+    },
     ...scheduleTransferDeps(deps, input.uid),
     setMigrationPhase: (phase) => deps.setMigrationPhase?.({ uid: input.uid, sourceGatewayId: input.sourceGatewayId, operationId: input.operationId, phase }) ?? Promise.resolve(),
     readTargetSystemConfigCommit: (gatewayId) => awaitTargetSystemConfigCommit(deps, gatewayId, ctx.assertActiveClaim),
