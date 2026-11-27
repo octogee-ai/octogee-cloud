@@ -1497,30 +1497,55 @@ async function sharedSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsy
   return [...files, ...agents];
 }
 
-async function assertSharedSourceHoldsAuthorizedAgents(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode): Promise<void> {
-  if (mode !== "pre" || deps.adapter.isIsolatedGateway?.() !== false) return;
-  const readAnchors = deps.adapter.sourceAssignedAgentAnchors;
-  if (!readAnchors) throw new Error("Shared source pre-sync requires the assigned user's anchor authority");
+async function isolatedSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody) {
+  const readAnchors = deps.adapter.sourceMigrationAgentAnchors;
+  if (!readAnchors) throw new Error("Isolated source export requires current migration anchor authority");
+  const listed = await deps.adapter.listExportPaths(body.slug);
   const authority = await readAnchors(body.slug, body.migrationId);
-  if (!authorityBelongsToUser(authority, body.slug)) throw new Error("Shared source migration anchor authority does not belong to the user");
+  if (!authorityBelongsToUser(authority, body.slug)) throw new Error("Isolated source migration anchor authority does not belong to the user");
+  return [...listed, ...await authorizedAgentSources(resolveOpenClawStateDir(), authority, listed)];
+}
+
+function preSyncAnchorAuthority(deps: MigrationHandlerDeps) {
+  const isolated = deps.adapter.isIsolatedGateway?.();
+  if (isolated === undefined) return null;
+  const label = isolated ? "isolated" : "shared";
+  const read = isolated ? deps.adapter.sourceMigrationAgentAnchors : deps.adapter.sourceAssignedAgentAnchors;
+  if (!read) throw new Error(`${label} source pre-sync requires the user's agent anchor authority`);
+  return { label, read };
+}
+
+async function assertSourceHoldsAuthorizedAgents(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode): Promise<void> {
+  const authorityReader = mode === "pre" ? preSyncAnchorAuthority(deps) : null;
+  if (!authorityReader) return;
+  const { label, read } = authorityReader;
+  const authority = await read(body.slug, body.migrationId);
+  if (!authorityBelongsToUser(authority, body.slug)) throw new Error(`${label} source migration anchor authority does not belong to the user`);
   const stateDir = resolveOpenClawStateDir();
   const held = await authorizedAgentSources(stateDir, authority, []);
   const missing = authority.map(anchor => anchor.agentId).filter(agentId => !held.some(source => source.path === path.join("agents", agentId)));
   if (missing.length > 0) {
-    throw new Error(`shared source holds no agent store for authorized agents: [${missing.sort().join(", ")}]`);
+    throw new Error(`${label} source holds no agent store for authorized agents: [${missing.sort().join(", ")}]`);
   }
 }
 
+function finalSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody) {
+  const isolated = deps.adapter.isIsolatedGateway?.();
+  if (isolated === false) return sharedSourceExportPaths(deps, body);
+  if (isolated === true) return isolatedSourceExportPaths(deps, body);
+  return deps.adapter.listExportPaths(body.slug);
+}
+
 async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode, signal: AbortSignal) {
-  await assertSharedSourceHoldsAuthorizedAgents(deps, body, mode);
+  await assertSourceHoldsAuthorizedAgents(deps, body, mode);
   const sourceHeld = mode === "final" && await deps.surgeSourceOpenClawHeld?.({ migrationId: body.migrationId, slug: body.slug }) === true;
   const retainedManifest = mode === "final" ? await readActivationManifest(OPENCLAW_DIR, body.slug).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
     throw error;
   }) : null;
   const retained = retainedManifest?.sourceWorkspaceIdentities ? await retainedSourceExport(deps, body, signal, sourceHeld) : null;
-  const allSources = retained?.sources ?? (mode === "final" && deps.adapter.isIsolatedGateway?.() === false
-    ? await sharedSourceExportPaths(deps, body)
+  const allSources = retained?.sources ?? (mode === "final"
+    ? await finalSourceExportPaths(deps, body)
     : await deps.adapter.listExportPaths(body.slug));
   const sources = sourcesForPushMode(allSources, body.slug, mode);
   const postgres = mode === "final" ? retained?.postgres ?? await planPostgresAgentExport(sources, signal) : [];

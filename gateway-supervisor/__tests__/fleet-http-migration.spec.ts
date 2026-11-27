@@ -1,6 +1,6 @@
 
 
-import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach, onTestFinished } from "vitest";
 import { pendingCloneAppliedFingerprint } from "../lib/pending-clone-fingerprint";
 import { deferredProjectPlaceholder } from "../lib/deferred-project-workspace.js";
 import type { Request, Response } from "express";
@@ -72,7 +72,7 @@ import { SchedulerRefusal } from "../lib/scheduler-failure.js";
 import { OpenClawRuntimeUpdateGuard } from "../lib/openclaw-runtime-update-guard.js";
 import { stubUserClaim } from "./helpers/user-claim.js";
 import { exportCodexStoreSnapshots } from "../lib/codex-store-snapshot.js";
-import { OPENCLAW_DIR } from "../lib/config.js";
+import { OPENCLAW_CONFIG, OPENCLAW_DIR } from "../lib/config.js";
 import { readActivationManifest, writeActivationManifest, activationManifestTarPath } from "../lib/migration-activation-manifest.js";
 
 import { createIsolatedSurgeGateWiring } from "../lib/fleet-provisioner.js";
@@ -3988,6 +3988,80 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     });
   });
 
+  describe("a user returning from an isolated gateway after a project was archived there", () => {
+    const coach = "octogee-chris-coach", active = "octogee-chris-proj-one-coach", archived = "octogee-chris-proj-shelved-coach";
+    const anchor = (agentId: string) => ({ agentId, storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" });
+
+    async function configureRoster(stateDir: string, configured: readonly string[]): Promise<void> {
+      const workspaceFor = (agentId: string) => agentId === coach
+        ? path.join(stateDir, "customers", "chris")
+        : path.join(stateDir, "customers", "chris", "projects", agentId.replace(/^octogee-chris-proj-/, "").replace(/-coach$/, ""));
+      for (const agentId of configured) await fs.mkdir(workspaceFor(agentId), { recursive: true });
+      await fs.mkdir(path.dirname(OPENCLAW_CONFIG), { recursive: true });
+      await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify({
+        agents: { list: configured.map(agentId => ({ id: agentId, ...(agentId === coach ? { default: true } : {}), workspace: workspaceFor(agentId) })) },
+      }));
+      onTestFinished(() => fs.rm(OPENCLAW_CONFIG, { force: true }));
+    }
+
+    async function isolatedSource(mode: "pre" | "final", migrationId: string, roster: { configured: readonly string[]; onDisk: readonly string[]; authorized: readonly string[] }) {
+      const stateDir = await mkTempRoot();
+      for (const id of roster.onDisk) await writeStore(stateDir, `agents/${id}/agent/openclaw-agent.sqlite`, () => {});
+      spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+      const pushed = pushRsync(stateDir, migrationId, { mode });
+      stubUserClaim("chris");
+      await configureRoster(stateDir, roster.configured);
+      const { buildBrokeredLifecycleAdapter } = await import("../lib/user-lifecycle-broker-adapter.js");
+      const configured = buildBrokeredLifecycleAdapter({ client: {} as never, rpc: {} as never, log: vi.fn() });
+      Object.assign(pushed.adapter, {
+        isIsolatedGateway: () => true,
+        listExportPaths: configured.listExportPaths,
+        sourceMigrationAgentAnchors: vi.fn(async () => roster.authorized.map(anchor)),
+        sourceAssignedAgentAnchors: vi.fn(async () => { throw new Error("an isolated source reads its move's anchor authority"); }),
+      });
+      return pushed;
+    }
+
+    const carriedAgents = () => (spawnMock.mock.calls[0]![1] as string[])
+      .map(arg => /\/\.\/agents\/([^/]+)\/agent\/\.octogee-snapshot$/.exec(arg)?.[1]).filter(Boolean).sort();
+
+    it.each([
+      ["an active and an archived project agent", [coach, active], [coach, active, archived]],
+      ["only an archived project agent", [coach], [coach, archived]],
+    ])("carries the detached archived agent's kept store with %s in the final push", async (_case, configured, held) => {
+      const { handler, req } = await isolatedSource("final", "isolated-return-archived", { configured, onDisk: held, authorized: held });
+      const response = mkResponse();
+
+      await handler(req, response.res, vi.fn());
+
+      expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
+      expect(carriedAgents()).toEqual([...held].sort());
+    });
+
+    it("refuses the pre-sync push, before the source is quiesced, when an authorized agent has no store on the isolated source", async () => {
+      const { handler, adapter, req } = await isolatedSource("pre", "isolated-return-purged", { configured: [coach], onDisk: [coach], authorized: [coach, archived] });
+      const response = mkResponse();
+
+      await handler(req, response.res, vi.fn());
+
+      expect(response.getStatus()).toBe(500);
+      expect(response.getBody()).toMatchObject({ message: `isolated source holds no agent store for authorized agents: [${archived}]` });
+      expect(adapter.sourceMigrationAgentAnchors).toHaveBeenCalledExactlyOnceWith("chris", "isolated-return-purged");
+      expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    it("pre-syncs through its move's anchor authority when the isolated source holds every authorized agent's store", async () => {
+      const { handler, adapter, req } = await isolatedSource("pre", "isolated-return-kept", { configured: [coach], onDisk: [coach, archived], authorized: [coach, archived] });
+      const response = mkResponse();
+
+      await handler(req, response.res, vi.fn());
+
+      expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
+      expect(adapter.sourceMigrationAgentAnchors).toHaveBeenCalledExactlyOnceWith("chris", "isolated-return-kept");
+      expect(adapter.sourceAssignedAgentAnchors).not.toHaveBeenCalled();
+    });
+  });
+
   it("pushes files only during pre-sync without snapshotting or transferring agent databases", async () => {
     const stateDir = await mkTempRoot();
     await writeStore(stateDir, CARRIED_STORE, () => {});
@@ -4303,6 +4377,31 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     const result = await finishImport(deps, migrationId);
     expect(result.getStatus(), JSON.stringify(result.getBody())).toBe(200);
     expect(order).toEqual(["doctor", "activate"]);
+  });
+
+  it("installs a returning user's carried archived project agent store on a shared target and leaves it unregistered", async () => {
+    const importDir = await mkTempRoot(), procRoot = await mkTempRoot();
+    const migrationId = "builder-return-archived";
+    const coach = "octogee-chris-coach", archived = "octogee-chris-proj-shelved-coach";
+    const targetMigrationIdentityCustody = vi.fn(async () => ({ ...sharedTargetAuthority("chris", migrationId), builderToShared: true,
+      anchors: [coach, archived].map(agentId => ({ agentId, storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" })) }));
+    const upgradeImportedAgents = vi.fn(async (input: { stores: Array<{ agentId: string }>; assertCurrent: () => Promise<void> }) => { await input.assertCurrent(); });
+    const runOpenClaw = vi.fn(async () => ({ code: 0, stdout: "[]" }));
+    const activateImportedUser = vi.fn(async () => ({ appliedFingerprint: "fp-chris" }));
+    const { deps, stageDir } = await prepareImport({ migrationId, importDir, daemon: mkFakeChild(),
+      adapter: { isIsolatedGateway: () => false, targetMigrationIdentityCustody, activateImportedUser },
+      deps: { procRoot, upgradeImportedAgents, runOpenClaw } as Partial<MigrationHandlerDeps> });
+    await stageSnapshot(stageDir, db => db.exec("INSERT INTO transcript_events VALUES ('coach')"));
+    await stageSnapshot(stageDir, db => db.exec("INSERT INTO transcript_events VALUES ('shelved'), ('shelved')"), archived);
+    spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+
+    const result = await finishImport(deps, migrationId);
+
+    expect(result.getStatus(), JSON.stringify(result.getBody())).toBe(200);
+    expect(rowCount(path.join(importDir, "agents", archived, "agent", "openclaw-agent.sqlite"))).toBe(2);
+    expect(upgradeImportedAgents.mock.calls[0]![0].stores.map(store => store.agentId).sort()).toEqual([coach, archived]);
+    expect(runOpenClaw).not.toHaveBeenCalledWith(expect.arrayContaining(["add", archived]), expect.anything());
+    expect(activateImportedUser).toHaveBeenCalledOnce();
   });
 
   it.each(["roster", "authority"] as const)("refuses Shared import when %s changes before agent adoption", async failure => {

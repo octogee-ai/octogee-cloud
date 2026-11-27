@@ -42,11 +42,16 @@ interface Options {
   root?: Record<string, unknown>;
   mirrorGatewayId?: string;
   migrating?: boolean;
+  quiesced?: boolean;
+  allocated?: boolean;
 }
+
+const ALLOCATION = { kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-alice", generation: 1, claimedByUid: UID };
+const ARCHIVED = { agentId: "octogee-alice-proj-shelved-coach", storeId: "1b7e0f4c-5c0d-4f43-9a55-0b8f1f6f2a10", schema: "octogee_agent_1b7e0f4c5c0d4f43" };
 
 async function fixture(options: Options = {}) {
   const documents = new RecordingDocuments({
-    [`gateways/${GATEWAY}`]: { ...ROOT, ...options.root },
+    [`gateways/${GATEWAY}`]: { ...ROOT, ...(options.allocated ? { allocation: ALLOCATION } : {}), ...options.root },
     [`gateways/${TARGET}`]: { ...ROOT, gatewayId: TARGET, gatewayClass: "shared", imageProfile: "shared", ownerUid: null, builderSlug: null },
     [`users/${UID}`]: { username: "alice", provisioning: { openclaw: { gatewayId: options.mirrorGatewayId ?? GATEWAY, slug: "alice" } } },
     [`glmGateways/${GATEWAY}`]: {
@@ -58,7 +63,7 @@ async function fixture(options: Options = {}) {
   });
   const store = createDocumentFixtureStore(documents);
   await store.gateways.assignments.put({ ...ASSIGNMENT, epoch: options.assignedEpoch ?? ASSIGNMENT.epoch,
-    ...(options.migrating ? { state: "quiescing", updatedByOperationId: OPERATION } : {}),
+    ...(options.migrating && options.quiesced !== false ? { state: "quiescing", updatedByOperationId: OPERATION } : {}),
   });
   if (options.migrating) {
     await store.users.records.setFence(UID, "migration", { operationId: OPERATION, state: "moving", startedAt: NOW - 80 });
@@ -67,7 +72,10 @@ async function fixture(options: Options = {}) {
       createdAt: NOW - 100, startedAt: NOW - 40, completedAt: null, steps: [],
       input: { fromGatewayId: GATEWAY, toGatewayId: TARGET, uid: UID, userSlug: "alice", source: "continuous-placement-policy" },
     });
-    await store.users.agentStores.put(UID, { kind: "agent", ...ANCHOR, gatewayId: GATEWAY, generation: null, assignmentEpoch: 0, recordedAt: NOW });
+    for (const anchor of options.allocated ? [ANCHOR, ARCHIVED] : [ANCHOR]) {
+      await store.users.agentStores.put(UID, { kind: "agent", ...anchor, gatewayId: GATEWAY, generation: options.allocated ? ALLOCATION.generation : null,
+        assignmentEpoch: 0, recordedAt: NOW });
+    }
   }
 
   const app = express();
@@ -195,5 +203,37 @@ describe("allocation-free isolated outbound source anchor reads", () => {
     }) as PlatformStateStore["transaction"]);
     await read(outbound).expect(403);
     expect(observe.mock.calls.some(([options]) => options.label === "fleet-broker.read-agent-anchors")).toBe(true);
+  });
+});
+
+describe("an isolated source's anchor read at pre-sync, before quiesce", () => {
+  const outbound = { migrationId: MIGRATION, uid: UID };
+  const preSync = { migrating: true, quiesced: false, root: { liveRelease: 1 } };
+
+  it("reads an allocation-free source owner's anchors for the running move while its assignment still serves the user, without granting a report", async () => {
+    const { read, report, store } = await fixture(preSync);
+    await read(outbound).expect(200, { anchors: [ANCHOR] });
+    await report(outbound).expect(403);
+    await read().expect(403);
+    expect(await store.users.agentStores.list(UID)).toHaveLength(1);
+  });
+
+  it.each([
+    ["another move", async (_store: PlatformStateStore) => ({ migrationId: "mig-some-other-operation" })],
+    ["a pending move", async (store: PlatformStateStore) => { await store.journal.operations.patch(OPERATION, { status: "pending", startedAt: null }); return {}; }],
+    ["a cut-over move", async (store: PlatformStateStore) => { await store.journal.operations.patch(OPERATION, { cutoverCommittedAt: NOW - 1 }); return {}; }],
+    ["no move fence on the user", async (store: PlatformStateStore) => { await store.users.records.setFence(UID, "migration", { clear: true }); return {}; }],
+  ] as const)("refuses an allocation-free source's pre-quiesce read for %s", async (_reason, change) => {
+    const { read, store } = await fixture(preSync);
+    const body = await change(store);
+    expect((await read({ ...outbound, ...body })).status).toBe(403);
+  });
+
+  it("reads an allocated source owner's full anchors, an archived project agent's included, for the running move", async () => {
+    const { read, report } = await fixture({ ...preSync, allocated: true });
+    const response = await read(outbound);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(response.body.anchors).toEqual([ANCHOR, ARCHIVED]);
+    await report(outbound).expect(403);
   });
 });

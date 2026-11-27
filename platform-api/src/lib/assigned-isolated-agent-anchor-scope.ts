@@ -78,7 +78,7 @@ function currentAnchorAssignmentEpoch(
   uid: string,
 ): number | null {
   if (!assignment || assignment.uid !== uid || assignment.slug !== input.slug || assignment.gatewayId !== input.gatewayId ||
-      assignment.state !== (input.sourceMigrationId === undefined ? "serving" : "quiescing") ||
+      (assignment.state !== "serving" && (input.sourceMigrationId === undefined || assignment.state !== "quiescing")) ||
       !Number.isSafeInteger(assignment.epoch) || assignment.epoch < 0 ||
       (input.requestedEpoch !== undefined && input.requestedEpoch !== assignment.epoch)) return null;
   return assignment.epoch;
@@ -111,8 +111,8 @@ function sourceMigrationOperationId(input: AssignedAnchorRequest, context: Sourc
       root.liveRelease !== root.desiredRelease || root.runtimeRestartFence !== undefined) return null;
   const operationId = id.slice(4);
   const marker = user.fences.migration;
-  return assignment.updatedByOperationId === operationId && marker?.operationId === operationId &&
-    marker.state === "moving" ? operationId : null;
+  const custody = assignment.state === "serving" || assignment.updatedByOperationId === operationId;
+  return custody && marker?.operationId === operationId && marker.state === "moving" ? operationId : null;
 }
 
 function isSoleSourceAssignment(assignments: readonly GatewayAssignment[], source: GatewayAssignment): boolean {
