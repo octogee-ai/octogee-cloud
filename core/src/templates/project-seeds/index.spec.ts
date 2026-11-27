@@ -70,7 +70,8 @@ describe("projectPlaybookSeeds", () => {
     expect(shipping).toMatch(/Google Cloud|GCP/i);
     expect(shipping).toMatch(/Firebase Hosting/i);
     expect(shipping).toContain("octogee-{workspaceSlug}-{projectSlug}.web.app");
-    expect(shipping).toMatch(/Every merge ships/i);
+    expect(shipping).toMatch(/goes live only after the owner\s+approves it/i);
+    expect(shipping).not.toMatch(/Every merge ships/i);
     expect(shipping).toMatch(/preview/i);
     expect(shipping).toMatch(/secrets/i);
   });
