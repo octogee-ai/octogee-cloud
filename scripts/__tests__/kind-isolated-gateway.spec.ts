@@ -39,7 +39,7 @@ const MIGRATION_TO_ISOLATED = "op-to-isolated";
 const MIGRATION_BACK = "op-back";
 
 const RESUMED_PROCESS_STARTS_MS = 30_000;
-const CONFIG_FILE = "/home/node/.openclaw/openclaw.json";
+const CONFIG_FILE = "/home/node/.openclaw/system_config/openclaw.json";
 const PROJECT_AGENT = "octogee-lin-proj-harbor-coach";
 
 function cluster(scenario: Scenario = {}) {
@@ -208,7 +208,7 @@ function cluster(scenario: Scenario = {}) {
       if (!running()) throw new Error(`container "gateway" of ${gatewayId} is not running`);
       if (path === CONFIG_FILE) {
         events.push("config read");
-        return JSON.stringify({ agents: { list: [{ id: "octogee-lin-coach" }, ...(detached ? [] : [{ id: PROJECT_AGENT }])] } });
+        return JSON.stringify({ agents: { entries: { "octogee-lin-coach": {}, ...(detached ? {} : { [PROJECT_AGENT]: {} }) } } });
       }
       if (path === BOOT_FILE || path === READY_FILE) {
         events.push("identity read");

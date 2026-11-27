@@ -42,7 +42,7 @@ const SECRET_PATTERNS = [
 ];
 
 export const PROJECT_SLUG = "harbor";
-const OPENCLAW_CONFIG = "/home/node/.openclaw/openclaw.json";
+const OPENCLAW_CONFIG = "/home/node/.openclaw/system_config/openclaw.json";
 const PROJECT_TIMEOUT_MS = 600_000;
 const PROJECT_AGENT_STORE_SQL = `SELECT gateway_id FROM platform.agent_stores WHERE uid = :'uid' AND agent_id = :'agent';
 `;
@@ -55,7 +55,12 @@ export function projectAgentId(user) {
 }
 
 export function configuresAgent(config, agentId) {
-  return new RegExp(`"id"\\s*:\\s*"${agentId}"`).test(config);
+  const agents = JSON.parse(config).agents;
+  if (agents?.entries && typeof agents.entries === "object" && !Array.isArray(agents.entries)) {
+    return Object.hasOwn(agents.entries, agentId) && agents.entries[agentId] !== null;
+  }
+  if (Array.isArray(agents?.list)) return agents.list.some(agent => agent?.id === agentId);
+  throw new Error("openclaw.json has neither agents.entries nor agents.list");
 }
 
 const GATEWAY_LEDGER_SQL = `SELECT event::text FROM platform.model_broker_usage_events
