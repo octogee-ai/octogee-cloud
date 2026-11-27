@@ -1499,8 +1499,8 @@ async function sharedSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsy
 
 async function assertSharedSourceHoldsAuthorizedAgents(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode): Promise<void> {
   if (mode !== "pre" || deps.adapter.isIsolatedGateway?.() !== false) return;
-  const readAnchors = deps.adapter.sourceMigrationAgentAnchors;
-  if (!readAnchors) throw new Error("Shared source export requires current migration anchor authority");
+  const readAnchors = deps.adapter.sourceAssignedAgentAnchors;
+  if (!readAnchors) throw new Error("Shared source pre-sync requires the assigned user's anchor authority");
   const authority = await readAnchors(body.slug, body.migrationId);
   if (!authorityBelongsToUser(authority, body.slug)) throw new Error("Shared source migration anchor authority does not belong to the user");
   const stateDir = resolveOpenClawStateDir();

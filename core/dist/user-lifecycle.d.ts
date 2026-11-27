@@ -248,6 +248,7 @@ export interface UserLifecycleAdapter {
     }) => Promise<void>;
     sourceMigrationIdentityCustody?: (slug: string, migrationId: string) => Promise<MigrationSourceIdentityCustody>;
     sourceMigrationAgentAnchors?: (slug: string, migrationId: string) => Promise<import("@octogee/shared/types/fleet-broker").FleetBrokerAgentAnchor[]>;
+    sourceAssignedAgentAnchors?: (slug: string, migrationId: string) => Promise<import("@octogee/shared/types/fleet-broker").FleetBrokerAgentAnchor[]>;
     quiesceUser: (slug: string, timeoutMs: number, opts?: {
         stopMattermost: boolean;
         schedulerMigrationId?: string;
