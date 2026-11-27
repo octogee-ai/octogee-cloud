@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { parseAllDocuments } from "yaml";
-import { gatewayPodRequests, type GatewayPodRequests } from "../../shared/types/cost-estimator.js";
-import { SIZING_TIERS, type SizingTier } from "../../shared/types/sizing.js";
+import { gatewayPodRequests, type GatewayPodRequests } from "@octogee/shared/types/cost-estimator";
+import { SIZING_TIERS, type SizingTier } from "@octogee/shared/types/sizing";
 
 const CHART_PATH = path.join(path.resolve(__dirname, "../.."), "charts/octogee-gateway");
 
