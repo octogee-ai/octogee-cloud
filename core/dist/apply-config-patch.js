@@ -469,8 +469,21 @@ function isUserMattermostAccountBinding(binding, slug) {
     const accountId = match.accountId;
     return typeof accountId === "string" && (accountId === `${slug}-coach` || accountId.startsWith(`${slug}-proj-`));
 }
-export function filterOutUserBindings(bindings, slug) {
+function isRetainedAgentOtherChannelBinding(binding, retainedAgentIds) {
+    if (!isPlainObject(binding) || !retainedAgentIds.has(binding.agentId))
+        return false;
+    const match = binding.match;
+    return isPlainObject(match) && typeof match.channel === "string" && match.channel !== "mattermost";
+}
+/**
+ * Drops the user's bindings. A binding on a channel other than Mattermost is
+ * kept when its agent is in `retainedAgentIds`: the platform writes only
+ * Mattermost bindings, so another channel's binding belongs to whatever added it.
+ */
+export function filterOutUserBindings(bindings, slug, retainedAgentIds = new Set()) {
     return bindings.filter((binding) => {
+        if (isRetainedAgentOtherChannelBinding(binding, retainedAgentIds))
+            return true;
         const agentId = isPlainObject(binding) ? binding.agentId : undefined;
         return !isUserAgentId(agentId, slug) &&
             !isUserMattermostAccountBinding(binding, slug);
@@ -481,9 +494,10 @@ export function filterOutUserBindings(bindings, slug) {
 // cycle for a content-identical write. Keep the current array — order and
 // identity — whenever the merged content is the same multiset.
 export function mergeUserBindings(current, slugs, nextUserBindings) {
+    const mountedAgentIds = new Set(nextUserBindings.map((binding) => binding.agentId));
     let kept = current;
     for (const slug of slugs) {
-        kept = filterOutUserBindings(kept, slug);
+        kept = filterOutUserBindings(kept, slug, mountedAgentIds);
     }
     const rebuilt = [...kept, ...nextUserBindings];
     if (rebuilt.length !== current.length)

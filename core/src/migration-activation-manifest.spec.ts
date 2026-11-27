@@ -406,6 +406,30 @@ describe("migration activation manifest", () => {
     });
   });
 
+  it("keeps an activated agent's binding on another channel", async () => {
+    const configPatch = vi.fn(async (patch: unknown) => ({ hash: "h2", config: patch }));
+    const telegram = { agentId: "octogee-alice-coach", match: { channel: "telegram", accountId: "default" } };
+    const rpc = {
+      configGet: vi.fn(async () => ({
+        hash: "h1",
+        config: {
+          agents: { list: [{ id: "octogee-alice-coach" }] },
+          channels: { mattermost: { accounts: {} } },
+          bindings: [telegram, { agentId: "octogee-alice-coach", stale: true }],
+        },
+      })),
+      configPatch,
+      close: vi.fn(async () => undefined),
+    };
+
+    await applyOpenClawActivationManifest(manifest(), { rpc: rpc as never, log: vi.fn() });
+
+    expect((configPatch.mock.calls[0][0] as { bindings: unknown[] }).bindings).toEqual([
+      telegram,
+      { agentId: "octogee-alice-coach", match: { channel: "mattermost", accountId: "alice-coach" } },
+    ]);
+  });
+
   it("does not import a dedicated source agent's default flag into a shared roster", async () => {
     const configPatch = vi.fn(async (patch: unknown) => ({ hash: "h2", config: patch }));
     const rpc = {

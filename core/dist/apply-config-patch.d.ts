@@ -70,7 +70,12 @@ export declare function userAgentRosterPatch(current: unknown, slug: string, age
 } | {
     entries: Record<string, Record<string, unknown>>;
 };
-export declare function filterOutUserBindings<T>(bindings: readonly T[], slug: string): T[];
+/**
+ * Drops the user's bindings. A binding on a channel other than Mattermost is
+ * kept when its agent is in `retainedAgentIds`: the platform writes only
+ * Mattermost bindings, so another channel's binding belongs to whatever added it.
+ */
+export declare function filterOutUserBindings<T>(bindings: readonly T[], slug: string, retainedAgentIds?: ReadonlySet<unknown>): T[];
 export declare function mergeUserBindings<T extends {
     agentId?: unknown;
 }>(current: readonly T[], slugs: readonly string[], nextUserBindings: readonly T[]): readonly T[];
