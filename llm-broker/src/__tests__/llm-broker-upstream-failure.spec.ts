@@ -156,6 +156,7 @@ describe("llm broker upstream failure log", () => {
       "llm-broker gate",
       "llm-broker upstream request",
       "llm-broker upstream headers",
+      "llm-broker usage recorded",
     ]);
   });
 });

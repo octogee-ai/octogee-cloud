@@ -26,9 +26,12 @@ import {
   isUnknownOpenRouterPricingModel,
   mergeAnthropicUsage,
   normalizeAnthropicUsage,
+  resolvedChargeUsd,
+  resolveRecordedCost,
   totalTokens,
   type AnthropicCacheWriteTtl,
   type AnthropicTokenUsage,
+  type ModelBrokerUsageRecordInput,
   type ModelBrokerUsageStore,
 } from "@octogee/core/model-broker/usage";
 import type { ResolvedHouseModel } from "@octogee/shared/types/platform-config";
@@ -656,6 +659,9 @@ interface MeteringContext {
   charge: RailCharge;
   fundedBudget?: NonNullable<OwnerModelBrokerGrant["fundedBudget"]>;
   vertexPricing?: { model: string; prices: VertexModelPriceTable };
+  railId: string;
+  railLogFields: Record<string, unknown>;
+  log?: (msg: string, fields?: Record<string, unknown>) => void;
 }
 
 // The metered outcome of one proxied call, collected identically from a
@@ -707,38 +713,57 @@ async function recordUsage(
     );
   }
   const upstreamId = metered.messageId;
+  const input: ModelBrokerUsageRecordInput = {
+    eventId: usageEventId(ctx.record, upstreamId, ctx.requestId),
+    requestId: ctx.requestId,
+    upstreamId,
+    provider: ctx.record.provider,
+    gatewayId: ctx.record.gatewayId,
+    ownerUid: ctx.record.ownerUid,
+    agentId: ctx.record.trace?.agentId ?? null,
+    brokerTokenHash: ctx.record.tokenHash,
+    brokerTokenSecretName: ctx.record.secretName,
+    providerKeySource: ctx.providerKey.source,
+    providerKeySecretName: ctx.providerKey.secretName ?? null,
+    degraded: ctx.degraded,
+    model,
+    usage,
+    cacheWriteTtl: ctx.cacheWriteTtl,
+    method: ctx.req.method.toUpperCase(),
+    path: ctx.url.pathname,
+    upstreamStatus: upstream.status,
+    now: ctx.now(),
+    countsTowardSpendWindow: ctx.countsTowardSpendWindow,
+    priceMultiplier: ctx.charge.priceMultiplier,
+    balanceDebit: ctx.charge.balanceDebit,
+    fundedBudget: ctx.fundedBudget,
+    reportedCostUsd,
+    usageKind:
+      ctx.record.purpose === "embeddings" ? "embedding" : "model",
+  };
   try {
-    await ctx.usageStore.recordUsage({
-      eventId: usageEventId(ctx.record, upstreamId, ctx.requestId),
-      requestId: ctx.requestId,
-      upstreamId,
-      provider: ctx.record.provider,
-      gatewayId: ctx.record.gatewayId,
-      ownerUid: ctx.record.ownerUid,
-      agentId: ctx.record.trace?.agentId ?? null,
-      brokerTokenHash: ctx.record.tokenHash,
-      brokerTokenSecretName: ctx.record.secretName,
-      providerKeySource: ctx.providerKey.source,
-      providerKeySecretName: ctx.providerKey.secretName ?? null,
-      degraded: ctx.degraded,
-      model,
-      usage,
-      cacheWriteTtl: ctx.cacheWriteTtl,
-      method: ctx.req.method.toUpperCase(),
-      path: ctx.url.pathname,
-      upstreamStatus: upstream.status,
-      now: ctx.now(),
-      countsTowardSpendWindow: ctx.countsTowardSpendWindow,
-      priceMultiplier: ctx.charge.priceMultiplier,
-      balanceDebit: ctx.charge.balanceDebit,
-      fundedBudget: ctx.fundedBudget,
-      reportedCostUsd,
-      usageKind:
-        ctx.record.purpose === "embeddings" ? "embedding" : "model",
-    });
+    await ctx.usageStore.recordUsage(input);
   } catch (err) {
     ctx.onMeteringError(err);
+    return;
   }
+  const recordedCost = resolveRecordedCost(input, ctx.cacheWriteTtl);
+  ctx.log?.("llm-broker usage recorded", {
+    requestId: ctx.requestId,
+    gatewayId: ctx.record.gatewayId,
+    ownerUid: ctx.record.ownerUid,
+    provider: ctx.record.provider,
+    keySource: ctx.providerKey.source,
+    rail: ctx.railId,
+    ...ctx.railLogFields,
+    model,
+    degraded: ctx.degraded,
+    totalTokens: totalTokens(usage),
+    costUsd: recordedCost.total,
+    chargeUsd: resolvedChargeUsd(input, recordedCost),
+    balanceDebited: ctx.charge.balanceDebit !== null,
+    countsTowardSpendWindow: ctx.countsTowardSpendWindow,
+  });
 }
 
 function usageEventId(
@@ -791,7 +816,7 @@ function gateDecisionName(gate: GateDecisionAllowed): string {
   return `degrade_${gate.degradeReason ?? "budget"}`;
 }
 
-type GateLogger = (decision: string, extra?: Record<string, unknown>) => void;
+type GateLogger = (decision: string, served: GateDecisionAllowed | null, extra: Record<string, unknown>) => void;
 
 function deniedDecisionName(gate: GateDecisionDenied): string {
   if (gate.budgetInterruption === "awaiting_increase") return "denied_waiting";
@@ -809,7 +834,7 @@ function sendGateDenied(
   if (gate.retryAfterSeconds) {
     res.setHeader("retry-after", String(gate.retryAfterSeconds));
   }
-  logGate(deniedDecisionName(gate), {
+  logGate(deniedDecisionName(gate), null, {
     status: gate.status,
     error: gate.error,
     budgetInterruption: gate.budgetInterruption,
@@ -1069,7 +1094,7 @@ async function logAndForwardAllowed(args: {
     onError: args.onMeteringError,
   });
   if (args.req.method.toUpperCase() === "POST") {
-    args.logGate(gateDecisionName(gate), {
+    args.logGate(gateDecisionName(gate), gate, {
       effectiveModel: gate.degrade ? houseModel : args.requestModel,
       windowCostUsd: gate.windowCostUsd,
       weekCostUsd: gate.weekCostUsd,
@@ -1116,6 +1141,9 @@ function meteringContextFor(args: {
   budgetFunded: boolean;
   fundedBudget: OwnerModelBrokerGrant["fundedBudget"];
   vertexPricing?: MeteringContext["vertexPricing"];
+  rail: ModelBrokerRail;
+  grant: OwnerModelBrokerGrant;
+  log?: (msg: string, fields?: Record<string, unknown>) => void;
 }): MeteringContext {
   const { providerKey, gate, meter, budgetFunded } = args;
   const railMetered = args.record.purpose !== "embeddings" && providerKey.source !== "owner_model_credential";
@@ -1137,6 +1165,9 @@ function meteringContextFor(args: {
       ? { fundedBudget: args.fundedBudget }
       : {}),
     ...(args.vertexPricing ? { vertexPricing: args.vertexPricing } : {}),
+    railId: args.grant.rail,
+    railLogFields: args.rail.logFields(args.grant, gate),
+    log: args.log,
   };
 }
 
@@ -1315,6 +1346,9 @@ async function forwardAllowed(args: {
         budgetFunded: gate.budgetFunded,
         fundedBudget: args.fundedBudget,
         vertexPricing: call.vertexPricing,
+        rail: args.rail,
+        grant: args.grant,
+        log: args.log,
       })
     : undefined;
   await writeUpstreamResponse(upstream, res, metering);
@@ -1627,7 +1661,7 @@ function brokerGateLogger(
   context: ResolvedBrokerRequest,
 ): GateLogger {
   const { record, providerKey, grant, requestModel, url } = context;
-  return (decision, extra = {}) => {
+  return (decision, served, extra) => {
     deps.log?.("llm-broker gate", {
       decision,
       gatewayId: record.gatewayId,
@@ -1640,7 +1674,7 @@ function brokerGateLogger(
       spendWeekUsd: grant.limits.spendWeekUsd,
       requestsPerMinute: grant.limits.requestsPerMinute,
       rail: grant.rail,
-      ...context.rail.logFields(grant),
+      ...context.rail.logFields(grant, served),
       requestModel,
       ...extra,
     });

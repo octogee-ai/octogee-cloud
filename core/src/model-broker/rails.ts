@@ -85,7 +85,7 @@ export interface ModelBrokerRail {
   meter(input: RailMeterInput): RailMeter;
   allowance(input: RailAllowanceInput): Promise<RailAllowanceResult>;
   throttle(observation: RailSpendObservation): RailSpendThrottle;
-  logFields(grant: OwnerModelBrokerGrant): Record<string, unknown>;
+  logFields(grant: OwnerModelBrokerGrant, served: GateDecisionAllowed | null): Record<string, unknown>;
 }
 
 export interface ModelBrokerRailRegistry {

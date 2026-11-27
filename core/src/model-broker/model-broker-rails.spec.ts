@@ -67,7 +67,7 @@ describe("operator rail", () => {
       .toEqual({ countsTowardSpendWindow: true, charge: CHARGE_AT_COST });
     expect(operatorRail.meter({ grant: grant(), gate: { ...allowed, degrade: true }, ownerUid: "u1" }))
       .toEqual({ countsTowardSpendWindow: false, charge: CHARGE_AT_COST });
-    expect(operatorRail.logFields(grant())).toEqual({});
+    expect(operatorRail.logFields(grant(), null)).toEqual({});
   });
 
   it("refuses a free-tier grant, which only a product rail can serve", async () => {
