@@ -6,7 +6,7 @@ const runtimeLogger = createServiceLogger("byosub-syncback-runner");
 import * as fs from "fs";
 import { pathToFileURL } from "node:url";
 import { parseAgentId } from "@octogee/shared/types/identity";
-import { readAuthProfileStore, sharedAuthStoreUsable } from "../lib/auth-profile-store.js";
+import { readAuthProfileState, readAuthProfileStore, sharedAuthStoreUsable } from "../lib/auth-profile-store.js";
 import {
   agentIdsFromConfig,
   codexAgentDir,
@@ -19,8 +19,13 @@ import {
   type SyncBackResult,
   type SyncBackTarget,
 } from "../lib/byosub-syncback.js";
-import { brokerPushByosubCred } from "../lib/byot-sync-runtime.js";
-import { buildCodexAuthJsonFromStore } from "../lib/model-credential-materializer.js";
+import { brokerPushByosubCred, brokerSignalSubscriptionNeedsReauth } from "../lib/byot-sync-runtime.js";
+import { checkSubscriptionAuthHealth, type SubscriptionAuthTarget } from "@octogee/core/codex-auth-health";
+import {
+  buildCodexAuthJsonFromStore,
+  CLAUDE_CLI_DEFAULT_PROFILE_ID,
+  OPENAI_CODEX_DEFAULT_PROFILE_ID,
+} from "../lib/model-credential-materializer.js";
 import { openClawConfigPath, openClawDir } from "../lib/openclaw-config-path.js";
 
 const OPENCLAW_DIR = openClawDir();
@@ -29,7 +34,7 @@ const INTERVAL_MS = Number(process.env.BYOSUB_SYNCBACK_INTERVAL_MS) || 300_000;
 
 const log = runtimeLogger.info;
 
-async function loadTargets(): Promise<SyncBackTarget[]> {
+async function agentAuthDirs(): Promise<Array<{ agentId: string; dir: string }>> {
   if ((process.env.GATEWAY_CLASS ?? "") === "shared") return [];
 
   let config: unknown;
@@ -43,12 +48,44 @@ async function loadTargets(): Promise<SyncBackTarget[]> {
     const sharedDir = sharedAuthAgentDir(OPENCLAW_DIR);
     return agentIds
       .filter((agentId) => parseAgentId(agentId).kind === "coach")
-      .map((agentId) => ({ agentId, readCredential: async () => await codexCredentialIn(sharedDir) }));
+      .map((agentId) => ({ agentId, dir: sharedDir }));
   }
-  return agentIds.map((agentId) => ({
+  return agentIds.map((agentId) => ({ agentId, dir: codexAgentDir(OPENCLAW_DIR, agentId) }));
+}
+
+async function loadTargets(): Promise<SyncBackTarget[]> {
+  return (await agentAuthDirs()).map(({ agentId, dir }) => ({
     agentId,
-    readCredential: async () => await codexCredentialIn(codexAgentDir(OPENCLAW_DIR, agentId)),
+    readCredential: async () => await codexCredentialIn(dir),
   }));
+}
+
+const SUBSCRIPTION_PROFILES = [
+  { provider: "openai", profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID },
+  { provider: "anthropic", profileId: CLAUDE_CLI_DEFAULT_PROFILE_ID },
+] as const;
+
+async function loadAuthHealthTargets(): Promise<SubscriptionAuthTarget[]> {
+  return (await agentAuthDirs()).flatMap(({ agentId, dir }) => {
+    const readAuthState = async () => {
+      const state = await readAuthProfileState(dir);
+      return state === null ? null : JSON.stringify(state);
+    };
+    return SUBSCRIPTION_PROFILES.map(({ provider, profileId }) => ({ agentId, provider, profileId, readAuthState }));
+  });
+}
+
+export async function authHealthSweepOnce(now = Date.now()): Promise<void> {
+  const targets = await loadAuthHealthTargets();
+  if (!targets.length) return;
+  const gatewayId = process.env.GATEWAY_ID?.trim();
+  if (!gatewayId) throw new Error("GATEWAY_ID is required to report a rejected subscription login");
+  await checkSubscriptionAuthHealth({
+    targets,
+    now,
+    signalNeedsReauth: async (rejection) => await brokerSignalSubscriptionNeedsReauth({ gatewayId, ...rejection }),
+    logFn: log,
+  });
 }
 
 async function codexCredentialIn(agentDir: string): Promise<string | null> {
@@ -83,6 +120,11 @@ async function main(): Promise<void> {
       if (r.failed) log(`sweep: ${r.failed} push(es) failed; retrying next tick`);
     } catch (e) {
       log(`WARN: sweep tick error — ${(e as Error).message}`);
+    }
+    try {
+      await authHealthSweepOnce();
+    } catch (e) {
+      log(`WARN: auth health tick error — ${(e as Error).message}`);
     }
   };
   await tick();

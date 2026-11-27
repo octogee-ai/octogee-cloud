@@ -211,8 +211,10 @@ describe("subscription link status on the platform store", () => {
     await request(app()).post("/capture").send({ flowId: "flow-1", credential: CODEX }).expect(200);
   });
 
+  const rejectedLogin = (observedAt: unknown) => ({ gatewayId: "gw-ada", agentId: COACH, provider: "openai", state: "needs_reauth", observedAt });
+
   it("marks a connected provider as needing reauth and shows it on the connection", async () => {
-    await request(app()).post("/auth-state").send({ gatewayId: "gw-ada", agentId: COACH, provider: "openai", state: "needs_reauth" }).expect(200);
+    await request(app()).post("/auth-state").send(rejectedLogin(Date.now() + 1_000)).expect(200);
 
     expect(await h.store.users.subscriptionLinks.list("uid-ada")).toMatchObject([{ provider: "openai", status: "needs_reauth" }]);
     const connection = await request(app()).get("/connection").expect(200);
@@ -221,6 +223,30 @@ describe("subscription link status on the platform store", () => {
       gatewayId: "gw-ada",
       providers: { openai: { status: "needs_reauth", connected: false } },
     });
+  });
+
+  it("ignores a rejection observed before the provider was last connected", async () => {
+    const [link] = await h.store.users.subscriptionLinks.list("uid-ada");
+
+    const res = await request(app()).post("/auth-state").send(rejectedLogin(link!.updatedAt - 1)).expect(200);
+
+    expect(res.body).toEqual({ ok: true, noop: true });
+    expect(await h.store.users.subscriptionLinks.list("uid-ada")).toMatchObject([{ provider: "openai", status: "connected" }]);
+  });
+
+  it.each([undefined, "soon", Number.NaN])("refuses a rejection without a usable observedAt (%s)", async (observedAt) => {
+    await request(app()).post("/auth-state").send(rejectedLogin(observedAt)).expect(400);
+
+    expect(await h.store.users.subscriptionLinks.list("uid-ada")).toMatchObject([{ provider: "openai", status: "connected" }]);
+  });
+
+  it("reconnecting a provider that needs reauth marks it connected again", async () => {
+    await request(app()).post("/auth-state").send(rejectedLogin(Date.now() + 1_000)).expect(200);
+    await startFlow("flow-2");
+
+    await request(app()).post("/capture").send({ flowId: "flow-2", credential: CODEX }).expect(200);
+
+    expect(await h.store.users.subscriptionLinks.list("uid-ada")).toMatchObject([{ provider: "openai", status: "connected" }]);
   });
 
   it("rotates the stored codex credential through the connected provider's secret", async () => {

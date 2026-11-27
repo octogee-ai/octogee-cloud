@@ -12,7 +12,7 @@ import type {
   SubscriptionLinkStatus,
   UserActivationLease,
 } from "@octogee/core/platform-state";
-import { readSubscriptionIntegration } from "@octogee/core/model-credential-records";
+import { readSubscriptionIntegration, subscriptionIntegration } from "@octogee/core/model-credential-records";
 import {
   deleteSecret,
   writeSecret,
@@ -786,6 +786,7 @@ router.post(
         agentId?: string;
         provider?: string;
         state?: string;
+        observedAt?: unknown;
       };
       const entry = providerEntryFromSubscriptionProvider(b.provider);
       if (
@@ -793,11 +794,13 @@ router.post(
         !b.agentId ||
         !isSafeAgentId(b.agentId) ||
         !entry ||
-        b.state !== "needs_reauth"
+        b.state !== "needs_reauth" ||
+        typeof b.observedAt !== "number" ||
+        !Number.isFinite(b.observedAt)
       ) {
         res.status(400).json({
           error:
-            "path-safe gatewayId, path-safe agentId, supported provider, state:'needs_reauth' required",
+            "path-safe gatewayId, path-safe agentId, supported provider, state:'needs_reauth', numeric observedAt required",
         });
         return;
       }
@@ -811,9 +814,10 @@ router.post(
         res.json({ ok: true, noop: true });
         return;
       }
-      const integration = await readSubscriptionIntegration(platformStateStore.users, assignedUid);
-      const providers = providerSetFromUserIntegration(integration);
-      if (!providers || !isConnectedProvider(providers, provider)) {
+      const links = await platformStateStore.users.subscriptionLinks.list(assignedUid);
+      const providers = providerSetFromUserIntegration(subscriptionIntegration(links));
+      const link = links.find((candidate) => candidate.provider === provider);
+      if (!providers || !isConnectedProvider(providers, provider) || !link || link.updatedAt >= b.observedAt) {
         res.json({ ok: true, noop: true });
         return;
       }

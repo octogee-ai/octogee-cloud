@@ -207,3 +207,77 @@ describe("byosub-syncback-runner sweepOnce", () => {
     expect(push).not.toHaveBeenCalled();
   });
 });
+
+const NOW = 1_789_736_218_000;
+
+function rejectedState(profileId: string): unknown {
+  return {
+    version: 1,
+    usageStats: {
+      [profileId]: { disabledReason: "auth_permanent", disabledUntil: NOW + 600_000, lastFailureAt: NOW - 60_000 },
+    },
+  };
+}
+
+function writeAgentState(home: string, agentId: string, state: unknown): void {
+  const dir = path.join(home, ".openclaw", "agents", agentId, "agent");
+  fs.mkdirSync(dir, { recursive: true });
+  const db = new DatabaseSync(path.join(dir, "openclaw-agent.sqlite"));
+  db.exec("CREATE TABLE IF NOT EXISTS auth_profile_store (store_key TEXT NOT NULL PRIMARY KEY, store_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+  db.exec("CREATE TABLE IF NOT EXISTS auth_profile_state (state_key TEXT NOT NULL PRIMARY KEY, state_json TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+  db.prepare("INSERT INTO auth_profile_state VALUES ('primary', ?, 1)").run(JSON.stringify(state));
+  db.close();
+}
+
+function writeSharedState(home: string, state: unknown): void {
+  writeSharedStore(home, { version: 1, profiles: {} });
+  const db = new DatabaseSync(path.join(home, ".openclaw", "state", "openclaw.sqlite"));
+  db.prepare("INSERT INTO config_machine_state VALUES ('authProfiles.state', ?, 1)").run(JSON.stringify(state));
+  db.close();
+}
+
+async function loadAuthHealthRunner() {
+  const signal = vi.fn(async () => {});
+  vi.doMock("../lib/byot-sync-runtime.js", () => ({ brokerPushByosubCred: vi.fn(), brokerSignalSubscriptionNeedsReauth: signal }));
+  const { authHealthSweepOnce } = await import("../entrypoints/byosub-syncback-runner.js");
+  return { signal, authHealthSweepOnce };
+}
+
+describe("byosub-syncback-runner authHealthSweepOnce", () => {
+  it("signals a subscription login OpenClaw rejected for good on an agent's own store", async () => {
+    const home = userHome();
+    writeAgentState(home, DEFAULT_AGENT, rejectedState("anthropic:claude-cli"));
+    const { signal, authHealthSweepOnce } = await loadAuthHealthRunner();
+
+    await authHealthSweepOnce(NOW);
+
+    expect(signal.mock.calls).toEqual([[
+      { gatewayId: "tester19-m-abc", agentId: DEFAULT_AGENT, provider: "anthropic", observedAt: NOW - 60_000 },
+    ]]);
+  });
+
+  it("reads OpenClaw's shared auth state under the default agent", async () => {
+    const home = userHome();
+    writeSharedState(home, rejectedState("openai:octogee-chatgpt"));
+    const { signal, authHealthSweepOnce } = await loadAuthHealthRunner();
+
+    await authHealthSweepOnce(NOW);
+
+    expect(signal.mock.calls).toEqual([[
+      { gatewayId: "tester19-m-abc", agentId: DEFAULT_AGENT, provider: "openai", observedAt: NOW - 60_000 },
+    ]]);
+  });
+
+  it("does not signal a rate limited subscription", async () => {
+    const home = userHome();
+    writeAgentState(home, DEFAULT_AGENT, {
+      version: 1,
+      usageStats: { "anthropic:claude-cli": { cooldownReason: "rate_limit", cooldownUntil: NOW + 60_000, lastFailureAt: NOW - 1 } },
+    });
+    const { signal, authHealthSweepOnce } = await loadAuthHealthRunner();
+
+    await authHealthSweepOnce(NOW);
+
+    expect(signal).not.toHaveBeenCalled();
+  });
+});
