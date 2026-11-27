@@ -14,7 +14,7 @@ import {
   type ScheduleTransferDoc,
 } from "@octogee/shared/types/fleet-controller";
 import type { FleetBrokerUserSnapshot } from "@octogee/shared/types/fleet-broker";
-import { buildOperationCompletionUpdate, classifyOperationFailure, MAX_OPERATION_ATTEMPTS, OPERATOR_ISOLATED_GATEWAY_WAIT_MS } from "../operation-retry";
+import { buildOperationCompletionUpdate, classifyOperationFailure, MAX_OPERATION_ATTEMPTS, MAX_OPERATOR_ISOLATED_GATEWAY_WAIT_ATTEMPTS, OPERATOR_ISOLATED_GATEWAY_WAIT_MS } from "../operation-retry";
 import { markGatewayLive, resolveSourceRevision } from "../index.js";
 import type { DurableGateway } from "../converge-gateway.js";
 import { assertUserRestoreSettled, createOperationContext, PendingUserRestoreError } from "../operation-context";
@@ -4377,7 +4377,7 @@ describe("the move an operator's give starts", () => {
 
     expect(early).toMatchObject({ success: false, error: `placement rejected for gw-green: ${reason}` });
     expect(waiting).toMatchObject({ status: "pending", nextAttemptAt: 5_000 + OPERATOR_ISOLATED_GATEWAY_WAIT_MS });
-    expect(waiting.error).toContain("waiting for isolated gateway gw-green to become ready (check 1 of 30)");
+    expect(waiting.error).toContain(`waiting for isolated gateway gw-green to become ready (check 1 of ${MAX_OPERATOR_ISOLATED_GATEWAY_WAIT_ATTEMPTS})`);
     expect(h.deps.commitCutover).not.toHaveBeenCalled();
 
     const ready = await handler(giveMove(1), h.ctx);

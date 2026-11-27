@@ -422,7 +422,7 @@ const logger = createLogger({
 const log = operationScopedLog((msg: string) => logger.legacy(msg));
 const RECONCILE_DEBOUNCE_MS = 1_000;
 const RECONCILE_RETRY_MS_DEFAULT = 30_000;
-const GATEWAY_RECHECK_MS = 15_000;
+export const GATEWAY_RECHECK_MS = 5_000;
 const DISRUPTION_OBSERVER_MS = parseNonNegativeInt(
   process.env.DISRUPTION_OBSERVER_MS,
   15_000,
@@ -467,7 +467,7 @@ const GATEWAY_VALUES_FILE = (function () {
 const VM_ENVIRONMENT = NAMESPACE.endsWith("-test") ? "test" : "prod";
 
 const FLEET_CONTROLLER_PORT = process.env.FLEET_CONTROLLER_PORT ?? "3003";
-const GATEWAY_HEARTBEAT_POLL_MS = 15_000;
+const GATEWAY_HEARTBEAT_POLL_MS = 5_000;
 const GATEWAY_HEALTH_TIMEOUT_MS = 5_000;
 export const ADD_GATEWAY_DEPLOYMENT_READY_TIMEOUT_MS = 30 * 60_000;
 const HTTP_PORT = parseInt(process.env.HTTP_PORT ?? "8080", 10);
@@ -1493,8 +1493,8 @@ async function publishLiveRuntime(input: {
   if (heartbeat) await transaction.fleetRegistry.recordHeartbeat(gateway.gatewayId, heartbeat);
 }
 
-async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, root: GatewayRoot, initialPrelaunch: boolean): Promise<void> {
-  if (!initialPrelaunch || root.desiredStatus !== "running" || !root.ownerUid) return;
+async function wakeIsolatedGatewayMoves(transaction: PlatformStateTransaction, root: GatewayRoot): Promise<void> {
+  if (root.gatewayClass !== "isolated" || root.desiredStatus !== "running" || !root.ownerUid) return;
   const moves = await transaction.journal.operations.listForUid(root.ownerUid, { kind: MIGRATE_USER_KIND, statuses: ["pending"] });
   for (const move of moves) {
     if (move.input?.toGatewayId === root.gatewayId && move.waitingOn === WAITING_FOR_ISOLATED_GATEWAY) {
@@ -1563,7 +1563,7 @@ export async function markGatewayLive(
       return false;
     }
     const heartbeat = await readReadyVmHeartbeat(transaction, gateway.gatewayId, vmReady);
-    await wakeIsolatedGatewayMoves(transaction, root, isInitialIsolatedPrelaunch(gateway));
+    await wakeIsolatedGatewayMoves(transaction, root);
     await transaction.gateways.roots.patch(
       gateway.gatewayId,
       { liveRelease: gateway.desiredRelease, updatedAt: now, updatedBy: "converge-gateway" },
@@ -2123,7 +2123,7 @@ export function startOperationWorker(deps: ControllerDeps, informer?: FleetInfor
   };
 }
 
-export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 20_000;
+export const OPERATION_QUEUE_DRAIN_MS_DEFAULT = 5_000;
 
 // Restart re-drive candidates. The predicate below admits only migrations with
 // durable migration or recovery state; legacy rollout sub-operations remain rollout-owned.
