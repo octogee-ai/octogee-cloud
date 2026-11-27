@@ -129,12 +129,33 @@ async function releaseHandoff(deps: SchedulerHandoffReleaseDeps, operation: List
   return true;
 }
 
+async function closeOrphanedForwardRecovery(deps: SchedulerHandoffReleaseDeps, listed: ListedOperation): Promise<boolean> {
+  const closed = await closeWhenUserLeftBothGateways(deps, listed);
+  deps.log(closed
+    ? `[scheduler-handoff-release] closed stuck forward recovery ${listed.id}: source ${listed.schedulerHandoff?.fromGatewayId} is retired and the user holds no gateway`
+    : `[scheduler-handoff-release] ${listed.id} requires forward recovery; source stays fenced`);
+  return closed;
+}
+
+async function closeWhenUserLeftBothGateways(deps: SchedulerHandoffReleaseDeps, listed: ListedOperation): Promise<boolean> {
+  const handoff = listed.schedulerHandoff;
+  if (!isHandoff(handoff) || typeof listed.cutoverCommittedAt === "number" || await deps.gatewayExists(handoff.fromGatewayId)) return false;
+  return deps.store.transaction({ label: "scheduler-handoff-release.close-orphaned-forward-recovery" }, async tx => {
+    const op = await tx.journal.operations.get(listed.id);
+    if (!op || op.revision !== listed.revision || op.status !== "failed" || op.schedulerHandoffReleased !== false) return false;
+    const [owner, assignments] = await Promise.all([tx.users.records.get(handoff.uid), tx.gateways.assignments.listForUid(handoff.uid)]);
+    if (owner?.gateway?.gatewayId !== undefined || assignments.length > 0) return false;
+    await tx.journal.operations.patch(op.id, { schedulerHandoffReleased: true, schedulerHandoffReleasedAt: deps.now() },
+      { revision: listed.revision });
+    return true;
+  });
+}
+
 async function releaseFailedHandoff(deps: SchedulerHandoffReleaseDeps, operation: ListedOperation): Promise<boolean> {
   const id = operation.id;
   if (operation.schedulerHandoff?.forwardRecovery !== undefined ||
       ["sourceQuiesced", "finalSynced", "targetVerified", "cutover", "sourceRetired", "complete"].includes(operation.userMigrationV2?.phase ?? "")) {
-    deps.log(`[scheduler-handoff-release] ${id} requires forward recovery; source stays fenced`);
-    return false;
+    return closeOrphanedForwardRecovery(deps, operation);
   }
   if (sourceRecoveryOwns(operation, id)) return false;
   const handoff = operation.schedulerHandoff;
