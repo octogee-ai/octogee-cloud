@@ -368,6 +368,7 @@ async function prepareUserSharedAnchors(ctx: BrokerCtx, input: {
   uid?: string; slug: string; agentIds: readonly string[]; allowQuiescingExisting?: boolean; migrationId?: string;
   sharedTargetWorkspace?: MigrationActivationManifest["targetWorkspaceIdentities"] | null;
   sourceResume?: MigrationSourceIdentityCustody;
+  archivedAgentIds?: ReadonlySet<string>;
 }) {
   if (ctx.isIsolatedGateway() || !postgresAgentStoreConfigured()) return undefined;
   const uid = input.uid ?? await ctx.client.uidForSlug(input.slug);
@@ -377,6 +378,7 @@ async function prepareUserSharedAnchors(ctx: BrokerCtx, input: {
   const migrationBound = !uid || surgeTarget || input.sharedTargetWorkspace !== undefined;
   return prepareSharedUserAgentAnchors({
     ...input, uid: uid ?? undefined, migrationId: migrationBound ? input.migrationId : undefined,
+    ...(input.archivedAgentIds ? { archived: { agentIds: input.archivedAgentIds, log: ctx.log } } : {}),
     stateDir: resolveOpenClawStateDir(), broker: ctx.client,
   });
 }
@@ -1646,7 +1648,7 @@ async function applyAddUserConfigPatch(
   const assignedIdentity = await assignedWorkspaceIdentityRestore(ctx, { snapshot, brokerSnapshot, agentEntry, projectAgentEntries, accountEntry, projectAccounts, accountTokens, bindings, callOpts });
   await callOpts?.brokerProfilesReady;
   const sharedAnchors = await prepareUserSharedAnchors(ctx, {
-    uid: snapshot.uid, slug: snapshot.slug, agentIds: brokerAgentIds,
+    uid: snapshot.uid, slug: snapshot.slug, agentIds: brokerAgentIds, archivedAgentIds: archivedProjectAgentIds(brokerSnapshot),
   });
   await reconcileUserRosterAgents(
     ctx,
