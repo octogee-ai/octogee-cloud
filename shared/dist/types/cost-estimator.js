@@ -1,12 +1,13 @@
-import { TIER_PRESETS, } from "./sizing.js";
-// Published GKE Autopilot Pod rates for the default general-purpose class
-// (us-central1 list price), which is what every workload is billed at. Excludes
-// egress, LB, GCS, Firestore - those are app-level metering territory (Phase 5a).
+import { EPHEMERAL_HOME_SCRATCH_GIB, GATEWAY_EDGE_RESOURCES, TIER_PRESETS, } from "./sizing.js";
+// GKE Autopilot general-purpose Pod request rates, us-central1, read from the
+// Cloud Billing catalog on 2026-11-27 (SKUs 3194-8714-B3AD, C097-3083-F510,
+// B19B-620C-1023; Spot C44C-2ABF-4CF9, C95A-9145-553A). Spot CPU and memory are
+// 0.3 of the regular rate; ephemeral storage has one rate whatever the capacity.
+// Excludes egress, LB, GCS and the cluster fee.
 export const AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR = 0.0445;
 export const AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR = 0.0049225;
+export const AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR = 0.0000548;
 export const HOURS_PER_MONTH = 730;
-// Google publishes Spot Pods at 60-91% off the corresponding regular rate. Take
-// the conservative end (70% off) so the dashboard never overstates savings.
 export const SPOT_PRICE_MULTIPLIER = 0.3;
 // Published Compute Engine rates for us-central1: E2 machines are billed per
 // vCPU and per GB, shared-core E2 types at a fraction of a vCPU. Spot E2 was
@@ -26,18 +27,36 @@ const E2_SHARED_CORE_SHAPES = {
     "e2-medium": { vcpu: 1, gb: 4 },
 };
 const E2_GB_PER_VCPU = { standard: 4, highmem: 8, highcpu: 1 };
+export function gatewayPodRequests(tier, opts = {}) {
+    const gateway = TIER_PRESETS[tier].resources.requests;
+    const edge = GATEWAY_EDGE_RESOURCES.requests;
+    const gatewayEphemeralGiB = opts.ephemeralHomeGiB === undefined
+        ? parseGiB(requiredEphemeralStorage(gateway, `tier ${tier}`))
+        : opts.ephemeralHomeGiB + EPHEMERAL_HOME_SCRATCH_GIB.builderCache + EPHEMERAL_HOME_SCRATCH_GIB.tmp;
+    return {
+        vcpu: (parseMillicores(gateway.cpu) + parseMillicores(edge.cpu)) / 1000,
+        memoryGiB: parseGiB(gateway.memory) + parseGiB(edge.memory),
+        ephemeralStorageGiB: gatewayEphemeralGiB + parseGiB(requiredEphemeralStorage(edge, "gateway edge")),
+    };
+}
 export function estimateGatewayMonthlyCost(tier, opts = {}) {
     const preset = TIER_PRESETS[tier];
     const pricingMode = opts.pricingMode ?? "on-demand";
-    const onDemandCompute = computeMonthlyUsd(preset);
+    const requests = gatewayPodRequests(tier, { ephemeralHomeGiB: opts.ephemeralHomeGiB });
+    const onDemandCompute = (requests.vcpu * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR + requests.memoryGiB * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR) *
+        HOURS_PER_MONTH;
     const compute = onDemandCompute * priceMultiplierFor(pricingMode);
+    const storage = requests.ephemeralStorageGiB * AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR * HOURS_PER_MONTH;
     return {
         computeUsd: Math.round(compute),
         onDemandComputeUsd: Math.round(onDemandCompute),
         savingsUsd: Math.max(0, Math.round(onDemandCompute) - Math.round(compute)),
+        storageUsd: Math.round(storage),
+        totalUsd: Math.round(compute + storage),
+        onDemandTotalUsd: Math.round(onDemandCompute + storage),
         pricingMode,
-        perUserAtTarget: Math.round(compute / preset.capacity.targetActiveUsers),
-        perUserAtTypical: Math.round(compute / preset.capacity.typicalUsers),
+        perUserAtTarget: Math.round((compute + storage) / preset.capacity.targetActiveUsers),
+        perUserAtTypical: Math.round((compute + storage) / preset.capacity.typicalUsers),
     };
 }
 export function estimateFleetMonthlyCost(inputs) {
@@ -48,8 +67,8 @@ export function estimateFleetMonthlyCost(inputs) {
         const tier = typeof input === "string" ? input : input.tier;
         const pricingMode = typeof input === "string" ? "on-demand" : input.pricingMode;
         const cost = estimateGatewayMonthlyCost(tier, { pricingMode });
-        total += cost.computeUsd;
-        onDemandTotal += cost.onDemandComputeUsd;
+        total += cost.totalUsd;
+        onDemandTotal += cost.onDemandTotalUsd;
         const entry = byTier[tier] ?? {
             count: 0,
             subtotalUsd: 0,
@@ -58,8 +77,8 @@ export function estimateFleetMonthlyCost(inputs) {
             onDemandCount: 0,
         };
         entry.count += 1;
-        entry.subtotalUsd += cost.computeUsd;
-        entry.onDemandSubtotalUsd += cost.onDemandComputeUsd;
+        entry.subtotalUsd += cost.totalUsd;
+        entry.onDemandSubtotalUsd += cost.onDemandTotalUsd;
         if (cost.pricingMode === "spot")
             entry.spotCount += 1;
         else
@@ -103,11 +122,11 @@ export function estimateVmGatewayMonthlyCost(input) {
         pricingMode,
     };
 }
-function computeMonthlyUsd(preset) {
-    const vcpu = parseMillicores(preset.resources.requests.cpu) / 1000;
-    const gib = parseGiB(preset.resources.requests.memory);
-    return (vcpu * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR * HOURS_PER_MONTH +
-        gib * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR * HOURS_PER_MONTH);
+function requiredEphemeralStorage(requests, owner) {
+    const quantity = requests["ephemeral-storage"];
+    if (!quantity)
+        throw new Error(`cost-estimator: ${owner} has no ephemeral-storage request`);
+    return quantity;
 }
 function priceMultiplierFor(mode) {
     return mode === "spot" ? SPOT_PRICE_MULTIPLIER : 1;
@@ -119,8 +138,8 @@ function parseMillicores(s) {
     return parseInt(m[1], 10);
 }
 function parseGiB(s) {
-    const m = /^(\d+)Gi$/.exec(s);
+    const m = /^(\d+)(Gi|Mi)$/.exec(s);
     if (!m)
-        throw new Error(`cost-estimator: unexpected memory format "${s}" — expected "<N>Gi"`);
-    return parseInt(m[1], 10);
+        throw new Error(`cost-estimator: unexpected quantity "${s}" — expected "<N>Gi" or "<N>Mi"`);
+    return m[2] === "Gi" ? parseInt(m[1], 10) : parseInt(m[1], 10) / 1024;
 }

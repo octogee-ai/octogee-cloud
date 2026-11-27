@@ -36,6 +36,11 @@ export const TIER_PRESETS = {
         capacity: { targetActiveUsers: 4, typicalUsers: 6 },
     },
 };
+export const GATEWAY_EDGE_RESOURCES = {
+    requests: { cpu: '100m', memory: '256Mi', 'ephemeral-storage': '1Gi' },
+    limits: { cpu: '500m', memory: '512Mi', 'ephemeral-storage': '1Gi' },
+};
+export const EPHEMERAL_HOME_SCRATCH_GIB = { builderCache: 2, tmp: 1 };
 export const PROFILE_DEFAULT_TIER = {
     standard: 'l',
     isolated: 's',

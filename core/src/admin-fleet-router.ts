@@ -99,6 +99,7 @@ import {
   type GatewayPricingMode,
   type VmGatewayCostInput,
 } from "@octogee/shared/types/cost-estimator";
+import { isIsolatedGatewayAllocation } from "@octogee/shared/types/gateway-mutable-config";
 import type { FleetRegistryVmFields } from "./platform-state/fleet-registry.js";
 import { migrationTransferTaskId, retargetedMigrationTransferId } from "./platform-state/migration-tasks.js";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
@@ -374,6 +375,7 @@ function sizeMonthlyCostUsd(
   tier: SizingTier,
   pricingMode: GatewayPricingMode,
   paused: boolean,
+  ephemeralHomeGiB: number | null,
 ): GatewayMonthlyCostUsd {
   if (paused) {
     return {
@@ -381,15 +383,15 @@ function sizeMonthlyCostUsd(
       basis: "size", perUserAtTarget: 0, perUserAtTypical: 0,
     };
   }
-  const cost = estimateGatewayMonthlyCost(tier, { pricingMode });
+  const cost = estimateGatewayMonthlyCost(tier, { pricingMode, ephemeralHomeGiB: ephemeralHomeGiB ?? undefined });
   return {
     compute: cost.computeUsd,
     onDemandCompute: cost.onDemandComputeUsd,
     savings: cost.savingsUsd,
     pricingMode: cost.pricingMode,
-    storage: 0,
-    total: cost.computeUsd,
-    onDemandTotal: cost.onDemandComputeUsd,
+    storage: cost.storageUsd,
+    total: cost.totalUsd,
+    onDemandTotal: cost.onDemandTotalUsd,
     basis: "size",
     perUserAtTarget: cost.perUserAtTarget,
     perUserAtTypical: cost.perUserAtTypical,
@@ -426,6 +428,7 @@ function resolveSizingForResponse(
   resolvedFrom: "explicit" | "class-default" | "profile-default";
   resources: { requests: { cpu: string; memory: string }; limits: { cpu: string; memory: string } };
   capacity: { targetActiveUsers: number; typicalUsers: number };
+  ephemeralHomeGiB: number | null;
   monthlyCostUsd: GatewayMonthlyCostUsd;
 } {
   const sizingTier =
@@ -443,6 +446,7 @@ function resolveSizingForResponse(
   // bill. Reflect that in both the per-gateway surface and the fleet roll-up
   // so the operator sees real cost, not nameplate.
   const isPaused = glmDoc?.desiredStatus === "paused";
+  const ephemeralHomeGiB = isIsolatedGatewayAllocation(glmDoc?.allocation) ? glmDoc.allocation.ephemeralHomeGiB ?? null : null;
   return {
     tier: resolved.tier,
     resolvedFrom: resolved.resolvedFrom,
@@ -457,9 +461,10 @@ function resolveSizingForResponse(
       },
     },
     capacity: resolved.preset.capacity,
+    ephemeralHomeGiB,
     monthlyCostUsd:
       vmMonthlyCostUsd(glmDoc, resolved.preset.capacity, isPaused) ??
-      sizeMonthlyCostUsd(resolved.tier, reservation.type, isPaused),
+      sizeMonthlyCostUsd(resolved.tier, reservation.type, isPaused, ephemeralHomeGiB),
   };
 }
 
@@ -3315,7 +3320,12 @@ function repriceGatewaySummaryFromKubernetes<T extends ReturnType<typeof project
     reservation,
     sizing: {
       ...summary.sizing,
-      monthlyCostUsd: sizeMonthlyCostUsd(summary.sizing.tier, reservation.type, summary.desiredStatus === "paused"),
+      monthlyCostUsd: sizeMonthlyCostUsd(
+        summary.sizing.tier,
+        reservation.type,
+        summary.desiredStatus === "paused",
+        summary.sizing.ephemeralHomeGiB,
+      ),
     },
   };
 }

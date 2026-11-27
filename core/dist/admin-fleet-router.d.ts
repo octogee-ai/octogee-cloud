@@ -135,6 +135,7 @@ declare function resolveSizingForResponse(glmDoc: Record<string, unknown> | unde
         targetActiveUsers: number;
         typicalUsers: number;
     };
+    ephemeralHomeGiB: number | null;
     monthlyCostUsd: GatewayMonthlyCostUsd;
 };
 export declare function resolveFleetNamespace(env?: NodeJS.ProcessEnv): string;

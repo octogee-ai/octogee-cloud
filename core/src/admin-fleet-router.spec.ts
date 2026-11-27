@@ -304,14 +304,24 @@ describe("projectGatewaySummary — monthly cost", () => {
   it("prices a pod gateway from its size, and a paused one at nothing", () => {
     const pod = { gatewayId: "ada-s-12345678", gatewayClass: "isolated", sizingTier: "s", desiredStatus: "running", runtime: "cluster" };
 
-    expect(summarize(pod).sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 14, storage: 0, total: 14, pricingMode: "spot" });
+    expect(summarize(pod).sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 15, storage: 0, total: 16, pricingMode: "spot" });
     expect(summarize({ ...pod, desiredStatus: "paused" }).sizing.monthlyCostUsd).toMatchObject({ basis: "size", total: 0 });
+  });
+
+  it("prices a pod gateway's ephemeral home from its allocation", () => {
+    const pod = {
+      gatewayId: "ada-s-12345678", gatewayClass: "isolated", sizingTier: "s", desiredStatus: "running", runtime: "cluster",
+      allocation: { kind: "disposable-builder", schemaVersion: 1, leaseId: "lease-one", generation: 1, claimedByUid: "uid-ada", ephemeralHomeGiB: 4 },
+    };
+
+    expect(summarize(pod).sizing.ephemeralHomeGiB).toBe(4);
+    expect(summarize({ ...pod, allocation: undefined }).sizing.ephemeralHomeGiB).toBeNull();
   });
 
   it("prices a VM gateway from its size, still at the VM's provisioning model, when its machine type has no rate", () => {
     const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, machineType: "n2-standard-2" } });
 
-    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 94, pricingMode: "on-demand" });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 98, pricingMode: "on-demand" });
     expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
   });
 
@@ -319,7 +329,7 @@ describe("projectGatewaySummary — monthly cost", () => {
     const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, machineType: "n2-standard-2", provisioningModel: "SPOT" } });
 
     expect(summary.reservation).toEqual({ type: "spot", priceMultiplier: SPOT_PRICE_MULTIPLIER, source: "vm" });
-    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 28, pricingMode: "spot" });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", compute: 29, total: 30, pricingMode: "spot" });
   });
 
   it("prices a Spot-specified VM that is running on demand at the on-demand rate", () => {
@@ -339,7 +349,7 @@ describe("projectGatewaySummary — monthly cost", () => {
   ])("prices a VM gateway from its size, not the us-central1 rates, with %s", (_name, elsewhere) => {
     const summary = summarize({ ...vmGateway, ...elsewhere });
 
-    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 94 });
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, compute: 98 });
     expect(summary.reservation).toEqual({ type: "on-demand", priceMultiplier: 1, source: "vm" });
   });
 
@@ -358,17 +368,17 @@ describe("projectGatewaySummary — monthly cost", () => {
   it.each([Number.NaN, Number.POSITIVE_INFINITY, -5])("never puts a disk size of %s into the bill", (diskSizeGb) => {
     const summary = summarize({ ...vmGateway, vmSpec: { ...vmSpec, diskSizeGb } });
 
-    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, total: 94 });
-    expect(rollupFleetStats([summary]).fleetCost.monthlyUsd).toBe(94);
+    expect(summary.sizing.monthlyCostUsd).toMatchObject({ basis: "size", storage: 0, total: 98 });
+    expect(rollupFleetStats([summary]).fleetCost.monthlyUsd).toBe(98);
   });
 
   it("adds each gateway's whole monthly cost, disks included, into the fleet total", () => {
     const shared = summarize({ gatewayId: "shared-abc", gatewayClass: "shared", desiredStatus: "running" });
 
     expect(rollupFleetStats([summarize(vmGateway), shared]).fleetCost).toMatchObject({
-      monthlyUsd: 68 + 94,
-      onDemandMonthlyUsd: 68 + 94,
-      byTier: { m: { count: 2, subtotalUsd: 68 + 94 } },
+      monthlyUsd: 68 + 98,
+      onDemandMonthlyUsd: 68 + 98,
+      byTier: { m: { count: 2, subtotalUsd: 68 + 98 } },
     });
   });
 });

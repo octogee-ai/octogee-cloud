@@ -29,6 +29,11 @@ export interface SizingTierPreset {
     capacity: TierCapacity;
 }
 export declare const TIER_PRESETS: Record<SizingTier, SizingTierPreset>;
+export declare const GATEWAY_EDGE_RESOURCES: TierResources;
+export declare const EPHEMERAL_HOME_SCRATCH_GIB: {
+    readonly builderCache: 2;
+    readonly tmp: 1;
+};
 export declare const PROFILE_DEFAULT_TIER: Record<GatewayProfile, SizingTier>;
 export declare const GATEWAY_CLASS_DEFAULT_TIER: Record<GatewayClass, SizingTier>;
 export declare const FALLBACK_DEFAULT_TIER: SizingTier;

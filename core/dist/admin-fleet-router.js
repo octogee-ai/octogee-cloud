@@ -17,6 +17,7 @@ import { SHARED_POOL_SLOT_ID_REQUIREMENT, isSharedPoolSlotId, sharedGatewayAdded
 import { readSharedGatewayPoolConfigInStore, } from "./shared-gateway-pool-read.js";
 import { SIZING_TIERS, resolveSizingTier, } from "@octogee/shared/types/sizing";
 import { GCE_E2_SPOT_PRICE_MULTIPLIER, SPOT_PRICE_MULTIPLIER, estimateGatewayMonthlyCost, estimateVmGatewayMonthlyCost, } from "@octogee/shared/types/cost-estimator";
+import { isIsolatedGatewayAllocation } from "@octogee/shared/types/gateway-mutable-config";
 import { migrationTransferTaskId, retargetedMigrationTransferId } from "./platform-state/migration-tasks.js";
 import { GATEWAY_UNREACHABLE_AFTER_MS, parseOpenClawProcessReport } from "@octogee/shared/types/fleet-controller";
 import { builderReturnOperationId, isUserReturnOperationIdFor, placementRetireOperationId, } from "@octogee/shared/types/isolated-operation-ids";
@@ -107,22 +108,22 @@ function withRetainedHomeDisk(glmDoc, disks) {
     const homeDisk = typeof glmDoc?.ownerUid === "string" ? disks.get(glmDoc.ownerUid) : undefined;
     return glmDoc && homeDisk ? { ...glmDoc, homeDisk } : glmDoc;
 }
-function sizeMonthlyCostUsd(tier, pricingMode, paused) {
+function sizeMonthlyCostUsd(tier, pricingMode, paused, ephemeralHomeGiB) {
     if (paused) {
         return {
             compute: 0, onDemandCompute: 0, savings: 0, pricingMode, storage: 0, total: 0, onDemandTotal: 0,
             basis: "size", perUserAtTarget: 0, perUserAtTypical: 0,
         };
     }
-    const cost = estimateGatewayMonthlyCost(tier, { pricingMode });
+    const cost = estimateGatewayMonthlyCost(tier, { pricingMode, ephemeralHomeGiB: ephemeralHomeGiB ?? undefined });
     return {
         compute: cost.computeUsd,
         onDemandCompute: cost.onDemandComputeUsd,
         savings: cost.savingsUsd,
         pricingMode: cost.pricingMode,
-        storage: 0,
-        total: cost.computeUsd,
-        onDemandTotal: cost.onDemandComputeUsd,
+        storage: cost.storageUsd,
+        total: cost.totalUsd,
+        onDemandTotal: cost.onDemandTotalUsd,
         basis: "size",
         perUserAtTarget: cost.perUserAtTarget,
         perUserAtTypical: cost.perUserAtTypical,
@@ -161,6 +162,7 @@ function resolveSizingForResponse(glmDoc, reservation) {
     // bill. Reflect that in both the per-gateway surface and the fleet roll-up
     // so the operator sees real cost, not nameplate.
     const isPaused = glmDoc?.desiredStatus === "paused";
+    const ephemeralHomeGiB = isIsolatedGatewayAllocation(glmDoc?.allocation) ? glmDoc.allocation.ephemeralHomeGiB ?? null : null;
     return {
         tier: resolved.tier,
         resolvedFrom: resolved.resolvedFrom,
@@ -175,8 +177,9 @@ function resolveSizingForResponse(glmDoc, reservation) {
             },
         },
         capacity: resolved.preset.capacity,
+        ephemeralHomeGiB,
         monthlyCostUsd: vmMonthlyCostUsd(glmDoc, resolved.preset.capacity, isPaused) ??
-            sizeMonthlyCostUsd(resolved.tier, reservation.type, isPaused),
+            sizeMonthlyCostUsd(resolved.tier, reservation.type, isPaused, ephemeralHomeGiB),
     };
 }
 function normalizeGatewayProfile(profile) {
@@ -2163,7 +2166,7 @@ function repriceGatewaySummaryFromKubernetes(summary, diagnostics) {
         reservation,
         sizing: {
             ...summary.sizing,
-            monthlyCostUsd: sizeMonthlyCostUsd(summary.sizing.tier, reservation.type, summary.desiredStatus === "paused"),
+            monthlyCostUsd: sizeMonthlyCostUsd(summary.sizing.tier, reservation.type, summary.desiredStatus === "paused", summary.sizing.ephemeralHomeGiB),
         },
     };
 }
