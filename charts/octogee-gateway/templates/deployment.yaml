@@ -21,6 +21,12 @@
 {{- $vmIsolated := and $isolatedClass $vmRuntime -}}
 {{- $isolatedPod := and $isolatedClass (not $vmRuntime) -}}
 {{- $ephemeralHomeGiB := .Values.ephemeralHomeGiB | default 0 -}}
+{{- $builderCacheGiB := 2 -}}
+{{- $tmpGiB := 1 -}}
+{{- $ephemeralHomeWorkingSetGiB := add $ephemeralHomeGiB $builderCacheGiB $tmpGiB -}}
+{{- if and $ephemeralHomeGiB (gt (int $ephemeralHomeWorkingSetGiB) 9) -}}
+{{- fail (printf "octogee-gateway: an ephemeral home of %dGi plus cache and tmp needs %dGi, over the 9Gi the gateway container can request under Autopilot's 10Gi pod ephemeral storage ceiling" (int $ephemeralHomeGiB) (int $ephemeralHomeWorkingSetGiB)) -}}
+{{- end -}}
 {{- if and $ephemeralHomeGiB (not (and $isolatedPod (not $checkpointSlot) (eq .Values.runtimeClassName "gvisor") .Values.gatewayEdge.enabled)) -}}
 {{- fail "octogee-gateway: ephemeral home requires an ordinary isolated gVisor gateway with an edge" -}}
 {{- end -}}
@@ -646,6 +652,9 @@ spec:
           resources:
             {{- if $vmIsolated }}
             {{- toYaml (mergeOverwrite (deepCopy $preset.resources) (dict "requests" (dict "ephemeral-storage" "9Gi") "limits" (dict "ephemeral-storage" "9Gi"))) | nindent 12 }}
+            {{- else if $ephemeralHomeGiB }}
+            {{- $workingSet := printf "%dGi" (int $ephemeralHomeWorkingSetGiB) }}
+            {{- toYaml (mergeOverwrite (deepCopy $preset.resources) (dict "requests" (dict "ephemeral-storage" $workingSet) "limits" (dict "ephemeral-storage" $workingSet))) | nindent 12 }}
             {{- else }}
             {{- toYaml $preset.resources | nindent 12 }}
             {{- end }}
@@ -939,7 +948,7 @@ spec:
         {{- if $isolatedClass }}
         - name: builder-cache
           emptyDir:
-            sizeLimit: 2Gi
+            sizeLimit: {{ printf "%dGi" (int $builderCacheGiB) }}
         {{- end }}
         {{- if $vmIsolated }}
         - name: project-materializations
@@ -984,7 +993,7 @@ spec:
             sizeLimit: 16Mi
         - name: tmp
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: {{ printf "%dGi" (int $tmpGiB) }}
         - name: octogee-api-sa-token
           projected:
             sources:
