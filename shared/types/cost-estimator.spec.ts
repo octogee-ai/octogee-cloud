@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR,
   AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR,
+  AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR,
   HOURS_PER_MONTH,
   SPOT_PRICE_MULTIPLIER,
   estimateGatewayMonthlyCost,
+  gatewayPodRequests,
   estimateFleetMonthlyCost,
   estimateVmGatewayMonthlyCost,
 } from "./cost-estimator.js";
@@ -14,6 +16,7 @@ describe("estimateGatewayMonthlyCost", () => {
   it("anchors to the published Autopilot general-purpose Pod rates", () => {
     expect(AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR).toBe(0.0445);
     expect(AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR).toBe(0.0049225);
+    expect(AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR).toBe(0.0000548);
     expect(HOURS_PER_MONTH).toBe(730);
   });
 
@@ -21,37 +24,55 @@ describe("estimateGatewayMonthlyCost", () => {
     expect(SIZING_TIERS).toEqual(["s", "m", "l"]);
     expect(
       Object.fromEntries(
-        SIZING_TIERS.map((tier) => [tier, estimateGatewayMonthlyCost(tier).computeUsd]),
+        SIZING_TIERS.map((tier) => [tier, [
+          estimateGatewayMonthlyCost(tier).totalUsd,
+          estimateGatewayMonthlyCost(tier, { pricingMode: "spot" }).totalUsd,
+        ]]),
       ),
-    ).toEqual({ s: 47, m: 94, l: 187 });
+    ).toEqual({ s: [51, 16], m: [98, 30], l: [192, 58] });
   });
 
-  it("computes compute cost from request CPU + memory at general-purpose Autopilot rates", () => {
-    // l: 4 vCPU / 16 GiB
+  it("adds the edge sidecar's requests to the gateway container's", () => {
+    expect(gatewayPodRequests("s")).toEqual({ vcpu: 1.1, memoryGiB: 4.25, ephemeralStorageGiB: 5 });
+    expect(gatewayPodRequests("m")).toEqual({ vcpu: 2.1, memoryGiB: 8.25, ephemeralStorageGiB: 6 });
+    expect(gatewayPodRequests("l")).toEqual({ vcpu: 4.1, memoryGiB: 16.25, ephemeralStorageGiB: 6 });
+  });
+
+  it("requests an ephemeral home with its cache and tmp in place of the tier's ephemeral storage", () => {
+    expect(gatewayPodRequests("s", { ephemeralHomeGiB: 4 })).toEqual({ vcpu: 1.1, memoryGiB: 4.25, ephemeralStorageGiB: 8 });
+    const pvc = estimateGatewayMonthlyCost("s");
+    const ephemeral = estimateGatewayMonthlyCost("s", { ephemeralHomeGiB: 4 });
+    expect(ephemeral.computeUsd).toBe(pvc.computeUsd);
+  });
+
+  it("prices CPU and memory at the CPU and memory rates and ephemeral storage at its own", () => {
     const result = estimateGatewayMonthlyCost("l");
-    const expected = Math.round(
-      4 * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR * HOURS_PER_MONTH +
-        16 * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR * HOURS_PER_MONTH,
-    );
-    expect(result.computeUsd).toBe(expected);
+    const compute = (4.1 * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR + 16.25 * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR) * HOURS_PER_MONTH;
+    const storage = 6 * AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR * HOURS_PER_MONTH;
+    expect(result.computeUsd).toBe(Math.round(compute));
+    expect(result.storageUsd).toBe(Math.round(storage));
+    expect(result.totalUsd).toBe(Math.round(compute + storage));
   });
 
-  it("derives perUserAtTarget and perUserAtTypical from raw compute and tier capacity", () => {
+  it("derives perUserAtTarget and perUserAtTypical from the total and tier capacity", () => {
     const preset = TIER_PRESETS["l"];
-    const rawCompute =
-      4 * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR * HOURS_PER_MONTH +
-      16 * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR * HOURS_PER_MONTH;
+    const total =
+      (4.1 * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR + 16.25 * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR + 6 * AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR) *
+      HOURS_PER_MONTH;
     const result = estimateGatewayMonthlyCost("l");
-    expect(result.perUserAtTarget).toBe(Math.round(rawCompute / preset.capacity.targetActiveUsers));
-    expect(result.perUserAtTypical).toBe(Math.round(rawCompute / preset.capacity.typicalUsers));
+    expect(result.perUserAtTarget).toBe(Math.round(total / preset.capacity.targetActiveUsers));
+    expect(result.perUserAtTypical).toBe(Math.round(total / preset.capacity.typicalUsers));
   });
 
-  it("applies the conservative Spot multiplier when pricingMode=spot", () => {
+  it("discounts CPU and memory on Spot but not ephemeral storage", () => {
     const onDemand = estimateGatewayMonthlyCost("l", { pricingMode: "on-demand" });
     const spot = estimateGatewayMonthlyCost("l", { pricingMode: "spot" });
+    const storage = 6 * AUTOPILOT_EPHEMERAL_STORAGE_GIB_USD_PER_HR * HOURS_PER_MONTH;
+    const onDemandCompute = (4.1 * AUTOPILOT_GENERAL_PURPOSE_VCPU_USD_PER_HR + 16.25 * AUTOPILOT_GENERAL_PURPOSE_GIB_USD_PER_HR) * HOURS_PER_MONTH;
     expect(spot.pricingMode).toBe("spot");
-    expect(spot.computeUsd).toBe(Math.round(onDemand.onDemandComputeUsd * SPOT_PRICE_MULTIPLIER));
-    expect(spot.onDemandComputeUsd).toBe(onDemand.computeUsd);
+    expect(spot.computeUsd).toBe(Math.round(onDemandCompute * SPOT_PRICE_MULTIPLIER));
+    expect(spot.totalUsd).toBe(Math.round(onDemandCompute * SPOT_PRICE_MULTIPLIER + storage));
+    expect(spot.onDemandTotalUsd).toBe(onDemand.totalUsd);
     expect(spot.savingsUsd).toBe(onDemand.computeUsd - spot.computeUsd);
   });
 
@@ -91,11 +112,11 @@ describe("estimateGatewayMonthlyCost", () => {
 });
 
 describe("estimateFleetMonthlyCost", () => {
-  it("sums per-pod compute across all input tiers", () => {
+  it("sums per-pod totals across all input tiers", () => {
     const result = estimateFleetMonthlyCost(["m", "l"]);
     expect(result.totalUsd).toBe(
-      estimateGatewayMonthlyCost("m").computeUsd +
-        estimateGatewayMonthlyCost("l").computeUsd,
+      estimateGatewayMonthlyCost("m").totalUsd +
+        estimateGatewayMonthlyCost("l").totalUsd,
     );
   });
 
@@ -108,22 +129,22 @@ describe("estimateFleetMonthlyCost", () => {
     expect(result.byTier["m"]).toEqual({
       count: 2,
       subtotalUsd:
-        estimateGatewayMonthlyCost("m", { pricingMode: "spot" }).computeUsd +
-        estimateGatewayMonthlyCost("m").computeUsd,
-      onDemandSubtotalUsd: 2 * estimateGatewayMonthlyCost("m").computeUsd,
+        estimateGatewayMonthlyCost("m", { pricingMode: "spot" }).totalUsd +
+        estimateGatewayMonthlyCost("m").totalUsd,
+      onDemandSubtotalUsd: 2 * estimateGatewayMonthlyCost("m").totalUsd,
       spotCount: 1,
       onDemandCount: 1,
     });
     expect(result.byTier.l).toEqual({
       count: 1,
-      subtotalUsd: estimateGatewayMonthlyCost("l").computeUsd,
-      onDemandSubtotalUsd: estimateGatewayMonthlyCost("l").computeUsd,
+      subtotalUsd: estimateGatewayMonthlyCost("l").totalUsd,
+      onDemandSubtotalUsd: estimateGatewayMonthlyCost("l").totalUsd,
       spotCount: 0,
       onDemandCount: 1,
     });
     expect(result.onDemandTotalUsd).toBe(
-      2 * estimateGatewayMonthlyCost("m").computeUsd +
-        estimateGatewayMonthlyCost("l").computeUsd,
+      2 * estimateGatewayMonthlyCost("m").totalUsd +
+        estimateGatewayMonthlyCost("l").totalUsd,
     );
     expect(result.savingsUsd).toBeGreaterThan(0);
   });

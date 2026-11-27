@@ -811,7 +811,7 @@ describe("GET /api/admin/gateways — sizing enrichment", () => {
     expect(paused.sizing.monthlyCostUsd.compute).toBe(0);
     expect(paused.sizing.monthlyCostUsd.perUserAtTarget).toBe(0);
     expect(running.sizing.monthlyCostUsd.compute).toBeGreaterThan(0);
-    expect(res.body.stats.fleetCost.monthlyUsd).toBe(running.sizing.monthlyCostUsd.compute);
+    expect(res.body.stats.fleetCost.monthlyUsd).toBe(running.sizing.monthlyCostUsd.total);
   });
 
   it("drops any legacy persistence to emptyDir and keeps the PROD operator Spot reservation default", async () => {

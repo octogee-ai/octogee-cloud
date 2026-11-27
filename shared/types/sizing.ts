@@ -65,6 +65,13 @@ export const TIER_PRESETS: Record<SizingTier, SizingTierPreset> = {
   },
 };
 
+export const GATEWAY_EDGE_RESOURCES: TierResources = {
+  requests: { cpu: '100m', memory: '256Mi', 'ephemeral-storage': '1Gi' },
+  limits: { cpu: '500m', memory: '512Mi', 'ephemeral-storage': '1Gi' },
+};
+
+export const EPHEMERAL_HOME_SCRATCH_GIB = { builderCache: 2, tmp: 1 } as const;
+
 export const PROFILE_DEFAULT_TIER: Record<GatewayProfile, SizingTier> = {
   standard: 'l',
   isolated: 's',
