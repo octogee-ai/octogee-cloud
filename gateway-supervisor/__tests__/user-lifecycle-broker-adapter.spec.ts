@@ -4797,6 +4797,62 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     expect(secretMocks.updateMattermostAccountSecrets.mock.invocationCallOrder[removal]).toBeLessThan(deletedAt);
   });
 
+  it("detaches an archived project's agent when the user's plan lapses on an isolated gateway, keeping its folder out of the configured export for the return to carry by authority", async () => {
+    const archivedAgentId = "octogee-alice-proj-shelved-coach";
+    const archivedAccountId = "alice-proj-shelved";
+    const snapshot = aliceSnapshot({ status: "complete", projectAgents: [], channels: [], archivedProjectIds: ["shelved"] });
+    const coachWorkspace = path.join(testRuntime.dir, "customers/alice");
+    let config: Record<string, any> = {
+      agents: { list: [
+        { id: "octogee-alice-coach", default: true, workspace: coachWorkspace },
+        { id: archivedAgentId, workspace: path.join(coachWorkspace, "projects/shelved") },
+      ] },
+      channels: { mattermost: { accounts: {
+        "alice-coach": { botToken: "owner-coach-token", allowFrom: [ALICE_OWNER_MM_ID] },
+        [archivedAccountId]: { botToken: mattermostAccountSecretRef(archivedAccountId) },
+      } } },
+      bindings: [
+        { agentId: "octogee-alice-coach", match: { channel: "mattermost", accountId: "alice-coach" } },
+        { agentId: archivedAgentId, match: { channel: "mattermost", accountId: archivedAccountId } },
+      ],
+    };
+    for (const agentId of ["octogee-alice-coach", archivedAgentId]) {
+      await fs.mkdir(path.join(testRuntime.dir, "agents", agentId, "agent"), { recursive: true });
+      await fs.writeFile(path.join(testRuntime.dir, "agents", agentId, "agent", "openclaw-agent.sqlite"), agentId);
+    }
+    await fs.mkdir(path.join(coachWorkspace, "projects/shelved"), { recursive: true });
+    const rpc = mkGatewayRpc({
+      configGet: vi.fn(async () => configSnapshot(config)),
+      channelsStatus: vi.fn(async () => ({ channelAccounts: { mattermost: [] } })),
+      agentsDetach: vi.fn(async ({ agentId }: { agentId: string }) => {
+        config = { ...config, agents: { list: config.agents.list.filter((entry: { id: string }) => entry.id !== agentId) } };
+        await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify(config));
+        return { ok: true as const, agentId, removedBindings: 1 };
+      }),
+    } as never);
+    patchMocks.applyConfigPatch.mockImplementationOnce(async (args) => {
+      const patch = args.buildPatch(config) as Record<string, any>;
+      const accounts = { ...config.channels.mattermost.accounts, ...patch.channels.mattermost.accounts };
+      for (const [accountId, account] of Object.entries(accounts)) if (account === null) delete accounts[accountId];
+      config = { ...config, channels: { mattermost: { accounts } }, bindings: patch.bindings };
+      await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify(config));
+      return { mode: "rpc", attempts: 1 };
+    });
+    await fs.mkdir(path.dirname(OPENCLAW_CONFIG), { recursive: true });
+    await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify(config));
+    stubUserClaim("alice");
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({ userSnapshot: vi.fn(async () => snapshot) }), rpc, log: vi.fn() });
+
+    await adapter.reconcileConfiguredUserProjectAgents!(snapshot);
+
+    expect(rpc.agentsDetach).toHaveBeenCalledWith({ agentId: archivedAgentId });
+    expect(rpc.agentsDelete).not.toHaveBeenCalledWith(expect.objectContaining({ agentId: archivedAgentId }));
+    expect(await fs.readFile(path.join(testRuntime.dir, "agents", archivedAgentId, "agent", "openclaw-agent.sqlite"), "utf8")).toBe(archivedAgentId);
+    const exported = (await adapter.listExportPaths("alice")).map(source => source.path);
+    expect(exported).toContain(path.join("agents", "octogee-alice-coach"));
+    expect(exported).not.toContain(path.join("agents", archivedAgentId));
+  });
+
   it("routes a new workspace session on a configured user without platform projects", async () => {
     secretMocks.updateMattermostAccountSecrets.mockClear();
     const snapshot = aliceSnapshot({ status: "complete", projectAgents: [], channels: [
