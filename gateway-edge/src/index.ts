@@ -19,7 +19,6 @@ import automationsRoutes from "./routes/automations.js";
 import gitRoutes from "./routes/workspace/git.js";
 import byosubHealthRoutes from "./routes/byosub-health.js";
 import { createByosubAuthRouter } from "./routes/byosub-auth.js";
-import internalAgentMessageRoutes from "./routes/internal/agent-message.js";
 import { createInternalConnectorApprovalRouter } from "./routes/internal/connector-approvals.js";
 
 import internalWorkspaceCommitRoutes from "@octogee/core/http-candidates/workspace-commit-router";
@@ -226,7 +225,6 @@ app.use((req, res, next) =>
 
 app.use("/api/g/:gatewayId/internal", internalByotSyncRoutes);
 app.use("/api/g/:gatewayId/internal/connector-approvals", createInternalConnectorApprovalRouter());
-app.use("/api/g/:gatewayId/internal/agent-message", internalAgentMessageRoutes);
 app.use("/internal/workspace", internalWorkspaceCommitRoutes);
 app.use("/internal/owner-automations", internalOwnerAutomationRoutes);
 app.use("/internal/projects", createProjectPersistenceRouter());
