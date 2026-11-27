@@ -65,9 +65,12 @@ function seedUser(uid: string, slug: string, admitted = true): void {
 }
 
 function store(): PlatformStateStore {
+  const caseTransactions = transactions;
+  const caseSecretPuts = secretPuts;
+  const caseWatchers = watchers;
   const fixture = createDocumentFixtureStore(records, {
     serializeTransactions: true,
-    beforeTransaction: (label) => transactions.push(label),
+    beforeTransaction: (label) => caseTransactions.push(label),
   });
   const recordingSecrets = (transaction: Parameters<Parameters<PlatformStateStore["transaction"]>[1]>[0]) => new Proxy(transaction, {
     get(target, property, receiver) {
@@ -76,7 +79,7 @@ function store(): PlatformStateStore {
         ...target.secrets,
         put: async (uid: string, row: UserSecretInput) => {
           if (secretPutFailure) throw new Error(`database refused row ${JSON.stringify(row)}`);
-          secretPuts.push(row);
+          caseSecretPuts.push(row);
           await target.secrets.put(uid, row);
         },
       };
@@ -86,7 +89,7 @@ function store(): PlatformStateStore {
     get(target, property, receiver) {
       if (property === "watch") {
         return (request: { aggregate: string }, listener: { onEvent: (event: unknown) => void }) => {
-          watchers.push({ aggregate: request.aggregate, listener });
+          caseWatchers.push({ aggregate: request.aggregate, listener });
           return { closed: Promise.resolve(), close: async () => undefined };
         };
       }
@@ -124,13 +127,21 @@ function store(): PlatformStateStore {
   });
 }
 
+function logInto(): (message: string) => void {
+  const lines = logs;
+  return (message) => {
+    lines.push(message);
+  };
+}
+
 function client() {
   return createProvisioningServiceClient({ baseUrl: fake.url, tokenPath: "/token", readToken: async () => "token", retry: { attempts: 2, baseDelayMs: 1, maxDelayMs: 1 } });
 }
 
 function recordingProjection(): ProvisioningProjection {
+  const calls = projectionCalls;
   const record = (name: string) => async () => {
-    projectionCalls.push(name);
+    calls.push(name);
   };
   return {
     ...noProvisioningProjection,
@@ -150,7 +161,7 @@ function sync(): ProvisioningSync {
     documents: { account: async (uid) => ACCOUNTS[uid] },
     projection: recordingProjection(),
     proxyUrl: null,
-    log: (message) => logs.push(message),
+    log: logInto(),
     watchTimeoutSeconds: 1,
     retry: { baseDelayMs: 1, maxDelayMs: 2 },
   });
@@ -340,7 +351,7 @@ describe("provisioning mirror", () => {
       documents: { account: async (uid) => ACCOUNTS[uid] },
       projection: noProvisioningProjection,
       proxyUrl: null,
-      log: (message) => logs.push(message),
+      log: logInto(),
       watchTimeoutSeconds: 1,
       retry: { baseDelayMs: 1, maxDelayMs: 2 },
     });
@@ -361,8 +372,8 @@ describe("provisioning mirror", () => {
   it("writes nothing and projects nothing when the records already match", async () => {
     await chatReadyUser();
     const resource = fake.resources.get("u1")!;
-    projectionCalls = [];
-    transactions = [];
+    projectionCalls.length = 0;
+    transactions.length = 0;
 
     const requestsBefore = fake.requests.length;
 
@@ -433,7 +444,8 @@ describe("platform chat secrets", () => {
 
   it("writes the secrets before any mirrored record", async () => {
     const instance = await chatReadyWithoutWaiting();
-    transactions = [];
+    await until(() => audit()?.status === "completed");
+    transactions.length = 0;
     fake.setStatus("u1", CHAT_READY);
     await until(() => instance.counters.mirrors.written === 1);
 
@@ -574,7 +586,7 @@ describe("a cloud teardown of a user not scheduled for deletion", () => {
       documents: { account: async (uid) => ACCOUNTS[uid] },
       projection: recordingProjection(),
       proxyUrl: null,
-      log: (message) => logs.push(message),
+      log: logInto(),
       watchTimeoutSeconds: 1,
       retry: { baseDelayMs: 1, maxDelayMs: 2 },
     }));
@@ -648,7 +660,7 @@ describe("users being erased", () => {
     await store().users.records.patch("u1", { accountLifecycle: scheduledDeletion });
     await store().workspaces.agentIdentities.delete("u1");
     await store().workspaces.records.delete("lin");
-    projectionCalls = [];
+    projectionCalls.length = 0;
 
     fake.setStatus("u1", { observedGeneration: 2 });
     await until(() => instance.counters.mirrors["being-erased"] >= 1);
@@ -887,7 +899,7 @@ describe("resource versions", () => {
       documents: { account: async (uid) => ACCOUNTS[uid] },
       projection: recordingProjection(),
       proxyUrl: null,
-      log: (message) => logs.push(message),
+      log: logInto(),
       retry: { baseDelayMs: 1, maxDelayMs: 2 },
     });
     stoppers.push(instance.start());
@@ -909,7 +921,7 @@ describe("resync and backfill completion", () => {
       documents: { account: async (uid) => accounts[uid] },
       projection: recordingProjection(),
       proxyUrl: null,
-      log: (message) => logs.push(message),
+      log: logInto(),
       watchTimeoutSeconds: 1,
       retry: { baseDelayMs: 1, maxDelayMs: 2 },
       resyncMs: 20,
@@ -936,13 +948,13 @@ describe("resync and backfill completion", () => {
       documents: { account: async (uid) => accounts[uid] },
       projection: recordingProjection(),
       proxyUrl: null,
-      log: (message) => logs.push(message),
+      log: logInto(),
       watchTimeoutSeconds: 1,
       retry: { baseDelayMs: 1, maxDelayMs: 2 },
     });
     stoppers.push(instance.start());
     await instance.snapshotLoaded();
-    await until(() => fake.resources.has("u1"));
+    await until(() => instance.observed("u1") !== undefined);
 
     accounts.u1.email = "lin.wu@example.test";
     await emitBuilders([{ type: "modified", key: "u1" }]);
