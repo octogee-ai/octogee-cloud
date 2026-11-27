@@ -220,10 +220,8 @@ selection and rollout are a separate operator step.
 ### Retained failure diagnostics
 
 Two overlay commits make two failures name their own cause. They follow the
-Mattermost session title commit on the fork's
-`fix/mattermost-session-display-name` branch, whose tip is
-`22920c164d44ff5bea8a5d724bcee7167caaa69f`. The next refresh carries and packs
-them; the pinned build `9fb9c7dc` does not contain them.
+Mattermost session title commit. The [November 27 refresh](#november-27-main-refresh)
+carries and packs them as the last two commits of `8a131c06e71e7832006c90e885a396aecd5c5774`.
 
 - **SQLite worker path.** A shared gateway's config reload failed with
   `SQLite worker database path must identify a regular file` and nothing else.
@@ -275,6 +273,125 @@ kubectl -n <namespace> exec <pod> -c gateway -- sh -c \
 Record what the path held, then replace the pod. Remove each diagnostic once
 the selected base names the path, or logs the stack and cause of a reload
 failure, natively.
+
+### November 27 main refresh
+
+The operator selected OpenClaw main `f7eb46290c31aa629464e75bdb8c2e447d94ff9d`
+for independent qualification. This is the step 1 exception: no full CI run
+has succeeded since November 12. The [exact-tip push CI](https://github.com/openclaw/openclaw/actions/runs/46017562721)
+passed `security-fast` and skipped the other 40 jobs. The [latest successful scheduled full CI](https://github.com/openclaw/openclaw/actions/runs/43129347832)
+is still the November 12 run on `cda0b61ac4d23fb0a5fa5530e37f9e74ce3face5`.
+Every scheduled full run on November 27 before the selection failed. Octogee
+qualifies the frozen tip on its own.
+
+The overlay is `8a131c06e71e7832006c90e885a396aecd5c5774` on branch
+`codex/gateway-refresh-20261127`. Four signed commits sit on the tip:
+the squashed overlay, the Mattermost session title commit and the two
+[retained diagnostics](#retained-failure-diagnostics). The range-diff against
+`58437942..22920c16` matches the last three commits exactly and changes only
+the squashed overlay.
+
+#### Talk consult steering adopts upstream
+
+Upstream `966d28749ccb40d87265a17a447d7bc5b9f2bd59` rewrote
+`src/gateway/talk/client-agent-consult.ts`. Upstream is changing voice
+actively, so Chris decided on 2026-11-27 to take upstream's file and drop the
+retained [#189418](https://github.com/openclaw/openclaw/pull/189418) change
+rather than express it again. If voice breaks, we open an upstream PR. The
+change's test additions in `src/gateway/talk/handlers/client-native-actions.test.ts`
+are dropped for the same reason. The upstream PR is still open.
+
+- **What the patch protected.** An owner or admin could steer an active voice
+  consult. Without the patch, steering failed with "could not confirm that
+  input": the consult was admitted as a direct attempt without tracing, but
+  steering projected the caller as a reply. The patch used the attempt
+  source and checked the live owner and backend through steering insertion.
+- **What upstream does now.** A consult runs as a turn of the same chat
+  through `agentCommandFromGatewayIngress`, on the chat's own model and
+  runtime. Steering uses the reply source and needs the Talk chat caller. The
+  session controller projects the current caller again at the backend write,
+  and steering requires a current operation with no result.
+  - A current caller steers the active consult.
+  - A permission change before steering is refused.
+  - A permission change during final admission is refused.
+
+  The three #189418 cases pass on the unmodified tip.
+- **What is no longer enforced.** The direct-attempt authority source is
+  gone. A Talk session without a chat caller cannot steer. A consult that sets
+  its own provider or model is refused, because it uses the chat's selection.
+- **What the Octogee voice path sees.** gateway-edge creates relay sessions
+  whose steering goes through upstream's rewritten `steer`. Consults now run on
+  the chat session's runtime and model.
+- **How to notice it on a gateway.** Spoken refusals saying "This agent runtime
+  cannot safely accept scoped voice steering", or gateway errors "Talk chat
+  caller authority is unavailable" or "The active Talk consult backend is no
+  longer current" while the consult is still running.
+
+The overlay's authenticated requester identity now follows upstream's new
+consult path. The Talk runtime keeps the command sender identity on the agent
+command's run context, and command attempts carry it to their tools. Without
+this, consult runs had no requester identity, so steering fingerprints did not
+match and five native steering tests failed with `tool_authority_mismatch`.
+`src/agents/command/attempt-tool-context.test.ts` covers it.
+
+#### Other adoptions
+
+- Native `isSyntheticGatewayConnection` replaces the overlay's equivalent check.
+- Upstream moved Doctor repair into `openclaw-state-db-doctor-repair.ts`. The
+  overlay drops its own equivalent extraction. Its cron predicate, cron custody
+  migration and bounded-schema repairs stay.
+- The overlay's inbound registry loader uses upstream's configured harness
+  runtimes callback.
+- The overlay's PostgreSQL pre-bootstrap test sits beside upstream's legacy-key test.
+
+#### Checks
+
+- **Focused tests.** 1,153 tests passed and 22 were skipped across 95 focused
+  files. Upstream's Talk consult, runtime and gateway-control suites
+  passed 88 tests, with 3 skipped, across 8 files.
+- **Mattermost.** 528 of 529 tests passed. The slash pre-authentication pool
+  case fails the same way on the unmodified tip on macOS.
+- **Typechecks and generated output.** `pnpm tsgo:prod`,
+  `config:channels:check`, `gateway:validators:check` and `config:docs:check`
+  passed. The Gateway predicates, channel config, config docs, PostgreSQL
+  catalogs and worker inventory were regenerated with their own generators.
+- **Aggregate check.** `pnpm check` ran to completion. Every lane passed except
+  lint. Its 22 `max-lines` errors are in the same files on the unmodified tip.
+- **Local build.** `pnpm build package` passed on macOS. `dist/build-info.json`
+  names the overlay commit, and the tree stayed clean.
+
+The [full Linux package build and installer](https://console.cloud.google.com/cloud-build/builds;region=us-central1/71e10602-92cc-4869-9614-36b24b23a7f0)
+passed. Production typechecks and generated-output checks passed, build-info
+matched, and the source tree stayed clean. Both packers used that build in
+sequence, and the root archive passed the upstream integrity check. The
+installed pair, patched npm controls, bundled trust, Parallel and Codex source
+matches, and the three Codex native hooks passed. The Browser projection was
+regenerated from the same source.
+
+The [PostgreSQL qualification](https://console.cloud.google.com/cloud-build/builds;region=us-central1/b23219a9-892e-4aac-adf1-db0bf533a836)
+passed 24 native conformance tests. The installed pin roll began at `e9c9cd30`
+and passed on PostgreSQL 16 with pgvector 0.8.7, using the restricted gateway
+role. The routine catalog changed only its source SHA.
+
+The [GitHub prerelease mirror](https://github.com/ceckert/openclaw/releases/tag/gateway-8a131c06e71e-20261127)
+uses the published object names. Readback verified each complete hash at its
+GCS generation, and the mirror assets match the same hashes.
+
+| Object | Generation | SHA-256 |
+| --- | --- | --- |
+| `openclaw-fork-7175fcaa.tgz` | `1795803334733004` | `7175fcaa37629aa9e96d381cec9536ccff58c3ebe873e02b49f0adada8346fad` |
+| `openclaw-mattermost-f81f4c75.tgz` | `1795803393276976` | `f81f4c75faff59db3ae1ed2dd76bdfa19d768af1248e6ffa2cd089edecc045fc` |
+
+Upstream contributions [#167431](https://github.com/openclaw/openclaw/pull/167431),
+[#178755](https://github.com/openclaw/openclaw/pull/178755),
+[#186891](https://github.com/openclaw/openclaw/pull/186891),
+[#186893](https://github.com/openclaw/openclaw/pull/186893),
+[#193636](https://github.com/openclaw/openclaw/pull/193636) and
+[#196215](https://github.com/openclaw/openclaw/pull/196215) remain open.
+
+The Shared and Builder image qualification and the hosted-island build were not
+run for this refresh. Build main builds the images after merge. Both gateway
+classes are not yet proven against this exact build through their real writers.
 
 ### November 25 Mattermost channel session titles
 
