@@ -710,11 +710,27 @@ function isUserMattermostAccountBinding(
   );
 }
 
+function isRetainedAgentOtherChannelBinding(
+  binding: unknown,
+  retainedAgentIds: ReadonlySet<unknown>,
+): boolean {
+  if (!isPlainObject(binding) || !retainedAgentIds.has(binding.agentId)) return false;
+  const match = binding.match;
+  return isPlainObject(match) && typeof match.channel === "string" && match.channel !== "mattermost";
+}
+
+/**
+ * Drops the user's bindings. A binding on a channel other than Mattermost is
+ * kept when its agent is in `retainedAgentIds`: the platform writes only
+ * Mattermost bindings, so another channel's binding belongs to whatever added it.
+ */
 export function filterOutUserBindings<T>(
   bindings: readonly T[],
   slug: string,
+  retainedAgentIds: ReadonlySet<unknown> = new Set(),
 ): T[] {
   return bindings.filter((binding) => {
+    if (isRetainedAgentOtherChannelBinding(binding, retainedAgentIds)) return true;
     const agentId = isPlainObject(binding) ? binding.agentId : undefined;
     return !isUserAgentId(agentId, slug) &&
       !isUserMattermostAccountBinding(binding, slug);
@@ -730,9 +746,10 @@ export function mergeUserBindings<T extends { agentId?: unknown }>(
   slugs: readonly string[],
   nextUserBindings: readonly T[],
 ): readonly T[] {
+  const mountedAgentIds = new Set(nextUserBindings.map((binding) => binding.agentId));
   let kept: readonly T[] = current;
   for (const slug of slugs) {
-    kept = filterOutUserBindings(kept, slug);
+    kept = filterOutUserBindings(kept, slug, mountedAgentIds);
   }
   const rebuilt = [...kept, ...nextUserBindings];
   if (rebuilt.length !== current.length) return rebuilt;

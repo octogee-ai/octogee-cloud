@@ -1609,6 +1609,29 @@ describe("mergeUserBindings", () => {
     const next = mergeUserBindings(current, ["bob"], [bobDefaultAgent]);
     expect(next.map((b) => b.agentId)).toEqual(["octogee-alice-coach", "octogee-bob-coach"]);
   });
+
+  const bobTelegram = { agentId: "octogee-bob-coach", match: { channel: "telegram", accountId: "default" } };
+
+  it("keeps a mounted agent's binding on another channel", () => {
+    const current = [aliceDefaultAgent, bobDefaultAgent, bobTelegram];
+    const next = mergeUserBindings(current, ["bob"], [structuredClone(bobDefaultAgent)]);
+    expect(next).toBe(current);
+  });
+
+  it("keeps a mounted agent's binding on another channel while its Mattermost bindings are rebuilt", () => {
+    const moved = structuredClone(bobDefaultAgent);
+    moved.match.peer.id = "g2-moved";
+    const next = mergeUserBindings([bobTelegram, bobDefaultAgent], ["bob"], [moved]);
+    expect(next).toEqual([bobTelegram, moved]);
+  });
+
+  it("drops another channel's binding for an agent that is no longer mounted", () => {
+    const carolTelegram = { agentId: "octogee-carol-coach", match: { channel: "telegram", accountId: "default" } };
+    const bobProjectTelegram = { agentId: "octogee-bob-proj-x-coach", match: { channel: "telegram" } };
+    const current = [bobDefaultAgent, carolDefaultAgent, carolTelegram, bobProjectTelegram];
+    const next = mergeUserBindings(current, ["bob", "carol"], [structuredClone(bobDefaultAgent)]);
+    expect(next).toEqual([bobDefaultAgent]);
+  });
 });
 
 describe("staleProjectAgentAccountNulls", () => {

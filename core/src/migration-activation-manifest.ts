@@ -863,7 +863,7 @@ export async function applyOpenClawActivationManifest(
             ...(Object.keys(activationDefaults).length > 0 ? { defaults: activationDefaults } : {}),
           },
           bindings: [
-            ...filterOutUserBindings(currentBindings, manifest.slug),
+            ...filterOutUserBindings(currentBindings, manifest.slug, new Set(activationAgents.map((entry) => entry.agentId))),
             ...activationAgents.flatMap((entry) => entry.bindings),
           ],
           channels: {
