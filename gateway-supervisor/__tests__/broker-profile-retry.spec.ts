@@ -498,6 +498,15 @@ describe("broker profile retry (level-triggered)", () => {
       expect(reload).toHaveBeenCalledTimes(2);
     });
 
+    it("logs a failed status read and reloads the secret snapshot instead", async () => {
+      expect((await scoped()).settled).toBe(true);
+      assigned = ["alice"];
+      status.mockRejectedValue(new Error("status unavailable"));
+      expect(await scoped()).toEqual({ settled: true, deferred: [] });
+      expect(reload).toHaveBeenCalledTimes(2);
+      expect(logs.some((m) => m.includes("status unavailable"))).toBe(true);
+    });
+
     it("still reloads the secret snapshot when this sweep materialized a profile", async () => {
       assigned = ["alice"];
       expect((await scoped()).settled).toBe(true);

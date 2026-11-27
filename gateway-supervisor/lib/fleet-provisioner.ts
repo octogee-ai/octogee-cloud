@@ -794,8 +794,14 @@ async function settleChangedScopeFromStatus(
   scope: BrokerProfileReloadScope,
 ): Promise<boolean> {
   if (brokerProfileSnapshotReloadPending || settledBrokerProfileScope === null || !rpc?.degradedSecretsStatus) return false;
-  const owners = await rpc.degradedSecretsStatus();
-  if (!(await ownersStagedForCurrentScope(owners, scope))) return false;
+  let owners: DegradedSecretOwner[];
+  try {
+    owners = await rpc.degradedSecretsStatus();
+    if (!(await ownersStagedForCurrentScope(owners, scope))) return false;
+  } catch (error) {
+    log(`[agent-model-token] ⚠ degraded secret status unreadable for the changed scope (${String(error)}); reloading the secret snapshot`);
+    return false;
+  }
   if (owners.length > 0) logNonBlockingSecretWarnings(log, owners.length, scope);
   settledBrokerProfileScope = scope.signature;
   return true;
