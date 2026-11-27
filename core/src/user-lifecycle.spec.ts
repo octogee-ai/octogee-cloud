@@ -2992,6 +2992,7 @@ const ADAPTER_REPO_TOUCHING: Record<keyof UserLifecycleAdapter, boolean> = {
     resumeUser: false,
     sourceMigrationIdentityCustody: false,
     sourceMigrationAgentAnchors: false,
+    sourceAssignedAgentAnchors: false,
     targetMigrationIdentityCustody: false,
     exportOpenClawActivationManifest: false,
     removeImportedUserBySlug: false,
