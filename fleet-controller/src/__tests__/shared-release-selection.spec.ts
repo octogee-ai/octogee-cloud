@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { gatewayUpsertOptsFromRelease } from "../converge-gateway.js";
 import { createHelmSubprocessRunner, sharedRuntimeIntentForValues } from "../helm-runner.js";
-import { installedSharedOptions, installedSharedReleaseReader } from "../shared-release-selection.js";
+import { installedSharedOptions, installedSharedReleaseReader, SHARED_RELEASE_OBSERVATION_GRACE_MS } from "../shared-release-selection.js";
 
 const tagged = (source: string, hash: string) => `${source}-oc2026.11.5@sha256:${hash.repeat(64)}`;
 const before = {
@@ -98,8 +98,84 @@ describe("selecting the installed Shared release", () => {
     { gateway: { ...gateway, liveRelease: 1 } },
     { requested: { ...after, openclawSourceSha: "e".repeat(40) } },
     { requested: { ...after, imageTag: tagged("7654321", "e") } },
+    { requested: { ...after, gatewayEdgeImage: { ...after.gatewayEdgeImage, imageTag: tagged("7654321", "e") } } },
     { requested: { ...after, imageTag: "7654321-main.1@sha256:" + "a".repeat(64) } },
   ])("takes the rollout path for changed or incomplete evidence %#", change => {
     expect(installedSharedOptions({ ...input, ...change })).toBeNull();
+  });
+});
+
+describe("an installed Shared release observation that fails", () => {
+  const noFile = { ...settings, valuesFile: undefined };
+  const immutable = gatewayUpsertOptsFromRelease({ ...noFile, gateway, artifact: before, replicas: 1 });
+  const observed = { instance: { ...instance, deploymentIntentFingerprint: immutable.deploymentIntentFingerprint,
+    sharedRuntimeIntent: { helmRevision: 4, fingerprint: sharedRuntimeIntentForValues(immutable, null)! } }, manifestDigest: "digest" };
+
+  function reader(clock: { now: number }) {
+    const outcome: { observation: "installed" | "unreadable"; manifestMatches: boolean } = { observation: "installed", manifestMatches: true };
+    const lines: string[] = [];
+    const helm = createHelmSubprocessRunner({ log: () => {}, runHelm: async () => ({ stdout: "", stderr: "", code: 0 }) });
+    helm.readSharedInstallation = async () => {
+      if (outcome.observation === "unreadable") throw new Error("helm status octogee-gw-shared-aaaaaaaaaaaa (ns=test) failed (code=128): helm terminated by signal SIGTERM");
+      return observed;
+    };
+    helm.matchesDeployedManifest = async () => outcome.manifestMatches;
+    const read = installedSharedReleaseReader(noFile, helm, line => lines.push(line), () => clock.now);
+    return { read, outcome, lines };
+  }
+
+  it("keeps a verified release current and names the failure", async () => {
+    const clock = { now: 1_000 };
+    const { read, outcome, lines } = reader(clock);
+    expect(await read(gateway, before, after)).toBe(true);
+    outcome.observation = "unreadable";
+    clock.now += 60_000;
+
+    expect(await read(gateway, before, after)).toBe(true);
+    expect(lines.join("\n")).toContain("failed (code=128): helm terminated by signal SIGTERM");
+  });
+
+  it("is not current before any verification", async () => {
+    const { read, outcome, lines } = reader({ now: 1_000 });
+    outcome.observation = "unreadable";
+
+    expect(await read(gateway, before, after)).toBe(false);
+    expect(lines.join("\n")).toContain("failed (code=128)");
+  });
+
+  it.each([
+    ["a new release", { gateway: { ...gateway, latestRelease: 3, desiredRelease: 3 }, requested: after }],
+    ["a different requested build", { gateway, requested: { ...after, imageTag: tagged("1111111", "a") } }],
+  ])("is not current after %s", async (_change, next) => {
+    const { read, outcome } = reader({ now: 1_000 });
+    expect(await read(gateway, before, after)).toBe(true);
+    outcome.observation = "unreadable";
+
+    expect(await read(next.gateway, before, next.requested)).toBe(false);
+  });
+
+  it("is not current once the verification is older than the grace window", async () => {
+    const clock = { now: 1_000 };
+    const { read, outcome } = reader(clock);
+    expect(await read(gateway, before, after)).toBe(true);
+    outcome.observation = "unreadable";
+    clock.now += SHARED_RELEASE_OBSERVATION_GRACE_MS + 1;
+
+    expect(await read(gateway, before, after)).toBe(false);
+  });
+
+  it("is not current after a mismatch replaced the verification", async () => {
+    const { read, outcome } = reader({ now: 1_000 });
+    expect(await read(gateway, before, after)).toBe(true);
+    outcome.manifestMatches = false;
+    observed.instance.sharedRuntimeIntent.helmRevision = 5;
+    try {
+      expect(await read(gateway, before, after)).toBe(false);
+      outcome.observation = "unreadable";
+
+      expect(await read(gateway, before, after)).toBe(false);
+    } finally {
+      observed.instance.sharedRuntimeIntent.helmRevision = 4;
+    }
   });
 });
