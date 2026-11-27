@@ -83,7 +83,7 @@ import {
   type SurgeOpenClawProcessHandlerDeps,
 } from "./surge-openclaw-process-http.js";
 import { startAfterSurgeReadiness } from "./surge-reconcile-gate.js";
-import type { GatewayRpcClient } from "./gateway-rpc.js";
+import type { DegradedSecretOwner, GatewayRpcClient } from "./gateway-rpc.js";
 import { agentIdsForMigration } from "./user-lifecycle-broker-adapter.js";
 import { createScheduleTransfer } from "./schedule-transfer.js";
 import {
@@ -773,7 +773,11 @@ async function verifyNonBlockingSecretWarnings(input: {
 }): Promise<boolean> {
   const { scope, rpc, warningCount } = input;
   if (!scope || !rpc.degradedSecretsStatus || warningCount <= 0) return false;
-  if (!stagedSecretOwnersOnly({ owners: await rpc.degradedSecretsStatus(), ...scope })) return false;
+  return ownersStagedForCurrentScope(await rpc.degradedSecretsStatus(), scope);
+}
+
+async function ownersStagedForCurrentScope(owners: DegradedSecretOwner[], scope: BrokerProfileReloadScope): Promise<boolean> {
+  if (!stagedSecretOwnersOnly({ owners, ...scope })) return false;
   const current = (await scope.readAssignedSlugs()).sort();
   return JSON.stringify(current) === JSON.stringify([...scope.assignedSlugs].sort());
 }
@@ -784,12 +788,32 @@ function logNonBlockingSecretWarnings(log: (msg: string) => void, warningCount: 
   log(`[agent-model-token] ${warningCount} secret warning(s) have no blocking owners${awaitingReconciler}`);
 }
 
+async function settleChangedScopeFromStatus(
+  log: (msg: string) => void,
+  rpc: Pick<GatewayRpcClient, "secretsReload" | "degradedSecretsStatus"> | undefined,
+  scope: BrokerProfileReloadScope,
+): Promise<boolean> {
+  if (brokerProfileSnapshotReloadPending || settledBrokerProfileScope === null || !rpc?.degradedSecretsStatus) return false;
+  let owners: DegradedSecretOwner[];
+  try {
+    owners = await rpc.degradedSecretsStatus();
+    if (!(await ownersStagedForCurrentScope(owners, scope))) return false;
+  } catch (error) {
+    log(`[agent-model-token] ⚠ degraded secret status unreadable for the changed scope (${String(error)}); reloading the secret snapshot`);
+    return false;
+  }
+  if (owners.length > 0) logNonBlockingSecretWarnings(log, owners.length, scope);
+  settledBrokerProfileScope = scope.signature;
+  return true;
+}
+
 async function reloadBrokerProfileSnapshot(
   log: (msg: string) => void,
   secretsReload: Pick<GatewayRpcClient, "secretsReload" | "degradedSecretsStatus"> | undefined,
   scope?: BrokerProfileReloadScope,
 ): Promise<void> {
-  if (scope && scope.signature !== settledBrokerProfileScope) brokerProfileSnapshotReloadPending = true;
+  if (scope && scope.signature !== settledBrokerProfileScope &&
+    !(await settleChangedScopeFromStatus(log, secretsReload, scope))) brokerProfileSnapshotReloadPending = true;
   if (!brokerProfileSnapshotReloadPending || !secretsReload) return;
   try {
     const result = await secretsReload.secretsReload();
