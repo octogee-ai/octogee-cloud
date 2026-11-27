@@ -143,8 +143,8 @@ async function closeWhenUserLeftBothGateways(deps: SchedulerHandoffReleaseDeps, 
   return deps.store.transaction({ label: "scheduler-handoff-release.close-orphaned-forward-recovery" }, async tx => {
     const op = await tx.journal.operations.get(listed.id);
     if (!op || op.revision !== listed.revision || op.status !== "failed" || op.schedulerHandoffReleased !== false) return false;
-    const owner = await tx.users.records.get(handoff.uid);
-    if (owner?.gateway?.gatewayId !== undefined) return false;
+    const [owner, assignments] = await Promise.all([tx.users.records.get(handoff.uid), tx.gateways.assignments.listForUid(handoff.uid)]);
+    if (owner?.gateway?.gatewayId !== undefined || assignments.length > 0) return false;
     await tx.journal.operations.patch(op.id, { schedulerHandoffReleased: true, schedulerHandoffReleasedAt: deps.now() },
       { revision: listed.revision });
     return true;

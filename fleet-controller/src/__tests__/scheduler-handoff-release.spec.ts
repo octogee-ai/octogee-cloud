@@ -57,8 +57,11 @@ describe("abandoned forward migration fences", () => {
       ["the source still runs", ["shared-old", "shared-new"], {}, {}],
       ["the user still holds a gateway", ["shared-new"], { provisioning: { openclaw: { gatewayId: "shared-new" } } }, {}],
       ["the cutover was committed", ["shared-new"], {}, { cutoverCommittedAt: 1500 }],
-    ])("keeps the fence while %s", async (_case, live, user, extra) => {
-      const records: Record<string, Record<string, unknown>> = { "glmOperations/stuck": failedForward(extra), "users/alice": user };
+      ["the user is served on a shared gateway", ["shared-new"], {}, {}, {
+        "gateways/shared-other/assignments/alice": { uid: "alice", slug: "alice", gatewayId: "shared-other", source: "onboarding", state: "serving", epoch: 3 },
+      }],
+    ])("keeps the fence while %s", async (_case, live, user, extra, assignments: Record<string, Record<string, unknown>> = {}) => {
+      const records: Record<string, Record<string, unknown>> = { "glmOperations/stuck": failedForward(extra), "users/alice": user, ...assignments };
       const { result } = await run(records, live);
       expect(result).toEqual({ released: 0 });
       expect(records["glmOperations/stuck"]).toMatchObject({ schedulerHandoffReleased: false });
