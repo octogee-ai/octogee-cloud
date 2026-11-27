@@ -2953,6 +2953,12 @@ export function buildBrokeredLifecycleAdapter(
       assertSourceIdentityCustody(custody, await sourceMigrationIdentityCustody(ctx, slug, migrationId));
       return current.anchors.filter(anchor => anchor.agentId !== SAFE_DEFAULT_AGENT_ID);
     },
+    sourceAssignedAgentAnchors: async (slug, migrationId) => {
+      const custody = await sourceMigrationIdentityCustody(ctx, slug, migrationId);
+      const current = await ctx.client.readAgentAnchors({ slug, uid: custody.uid });
+      assertSourceIdentityCustody(custody, await sourceMigrationIdentityCustody(ctx, slug, migrationId));
+      return current.anchors.filter(anchor => anchor.agentId !== SAFE_DEFAULT_AGENT_ID);
+    },
     listExportPaths,
     prepareKeyImportDir: (slug) => prepareKeyImportDir(ctx, slug),
     targetMigrationIdentityCustody: (slug, migrationId) => targetMigrationIdentityCustody(ctx, slug, migrationId),

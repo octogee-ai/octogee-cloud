@@ -1746,6 +1746,25 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it.each([false, true])("reads a serving source's anchors through its assignment, without migration authority, only while custody stays current (changed=%s)", async (changed) => {
+    vi.stubEnv("GATEWAY_ID", "user-source"); vi.stubEnv("POD_UID", "source-pod");
+    try {
+      let epoch = 4;
+      const anchors = ["octogee-tester10-coach", "octogee-tester10-proj-shelved-coach"].map((agentId, index) => ({ agentId, storeId: `source-store-${index}`, schema: `source_schema_${index}` }));
+      const readAgentAnchors = vi.fn(async () => {
+        if (changed) epoch++;
+        return { anchors: [...anchors, { agentId: "octogee-unmatched-route", storeId: "service-store", schema: "service_schema" }], assignment: { uid: "uid-tester10", epoch, state: "serving" as const } };
+      });
+      const client = mkClient({ userSnapshot: vi.fn(async () => ({ uid: "uid-tester10", slug: "tester10", gatewayId: "user-source", status: "complete" }) as FleetBrokerUserSnapshot),
+        assignmentRoster: vi.fn(async () => [{ uid: "uid-tester10", state: "serving", epoch }]), readAgentAnchors });
+      const adapter = buildBrokeredLifecycleAdapter({ client, rpc: mkGatewayRpc(), log: vi.fn() });
+      const result = adapter.sourceAssignedAgentAnchors!("tester10", "migration-source");
+      if (changed) await expect(result).rejects.toThrow("custody changed");
+      else await expect(result).resolves.toEqual(anchors);
+      expect(readAgentAnchors).toHaveBeenCalledExactlyOnceWith({ slug: "tester10", uid: "uid-tester10" });
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it.each(["current", "missing-migration", "serving", "changed-epoch"].flatMap(mode => [[mode, false], [mode, true]] as const))("reads explicit target migration authority without an assigned-owner fallback: %s (user=%s)", async (mode, user) => {
     vi.stubEnv("GATEWAY_ID", "shared-target"); vi.stubEnv("POD_UID", "target-pod");
     try {

@@ -3943,7 +3943,11 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       Object.assign(pushed.adapter, {
         isIsolatedGateway: () => false,
         listExportPaths: vi.fn(async () => [coach, active].filter(id => onDisk.includes(id)).map(id => ({ cwd: stateDir, path: path.join("agents", id) }))),
-        sourceMigrationAgentAnchors: vi.fn(async () => anchors),
+        sourceMigrationAgentAnchors: vi.fn(async () => {
+          if (mode === "pre") throw new Error("fleet-broker POST /internal/fleet/agent-anchors/read → 403 {\"error\":\"forbidden\"}");
+          return anchors;
+        }),
+        sourceAssignedAgentAnchors: vi.fn(async () => anchors),
       });
       return pushed;
     }
@@ -3972,13 +3976,15 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       expect(adapter.releaseAgent).not.toHaveBeenCalled();
     });
 
-    it("pre-syncs when every authorized agent's store is on the source", async () => {
-      const { handler, req } = await sharedSource("pre", "shared-archived-kept", [coach, active, archived]);
+    it("pre-syncs, before the source is quiesced, through its serving assignment's anchors when every authorized agent's store is on the source", async () => {
+      const { handler, adapter, req } = await sharedSource("pre", "shared-archived-kept", [coach, active, archived]);
       const response = mkResponse();
 
       await handler(req, response.res, vi.fn());
 
       expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
+      expect(adapter.sourceAssignedAgentAnchors).toHaveBeenCalledExactlyOnceWith("chris", "shared-archived-kept");
+      expect(adapter.sourceMigrationAgentAnchors).not.toHaveBeenCalled();
     });
   });
 

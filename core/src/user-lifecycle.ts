@@ -298,6 +298,7 @@ schedulerReady: () => Promise<void>;
 resumeUser: (slug: string, opts?: { migrationId: string; role?: "target" }) => Promise<void>;
 sourceMigrationIdentityCustody?: (slug: string, migrationId: string) => Promise<MigrationSourceIdentityCustody>;
 sourceMigrationAgentAnchors?: (slug: string, migrationId: string) => Promise<import("@octogee/shared/types/fleet-broker").FleetBrokerAgentAnchor[]>;
+sourceAssignedAgentAnchors?: (slug: string, migrationId: string) => Promise<import("@octogee/shared/types/fleet-broker").FleetBrokerAgentAnchor[]>;
 
 quiesceUser: (
     slug: string,
