@@ -389,9 +389,15 @@ Upstream contributions [#167431](https://github.com/openclaw/openclaw/pull/16743
 [#193636](https://github.com/openclaw/openclaw/pull/193636) and
 [#196215](https://github.com/openclaw/openclaw/pull/196215) remain open.
 
-The Shared and Builder image qualification and the hosted-island build were not
-run for this refresh. Build main builds the images after merge. Both gateway
-classes are not yet proven against this exact build through their real writers.
+The [Shared and Builder image qualification](https://console.cloud.google.com/cloud-build/builds;region=us-central1/4739a1fd-491c-4639-bb64-6e744c6dc831)
+passed on head `f08b7e9b6fc86222d65567c664de61070509f1da`. Both Linux AMD64
+images passed their real config writers, including a generated agent, and the
+strict Doctor comparison. They also passed the installed source SHA, the Codex
+native hooks, and the Skills and Memory workers. 74 focused platform specs passed.
+
+The [hosted island build](https://console.cloud.google.com/cloud-build/builds;region=us-central1/d8d5720d-2519-410b-8e3d-22945e50f0f0)
+passed 43 tests. Archive generation `1795805087045775` read back with SHA-256
+`632dc3a8a2225fd365014fd7b09001fe0464de26620600b3662db3feeab76b7e`.
 
 ### November 25 Mattermost channel session titles
 
