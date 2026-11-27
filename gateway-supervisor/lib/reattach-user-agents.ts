@@ -71,6 +71,7 @@ export async function reattachUserAgents(input: {
   signal?: AbortSignal;
   run?: OpenClawCommand;
   resolveCarriedWorkspace?: CarriedWorkspaceResolver;
+  retainsUnregistered?: (agentId: string) => Promise<boolean>;
   diagnosticIdentity?: CarriedAgentDiagnosticIdentity;
   log: (message: string, fields?: LogContext) => void;
 }): Promise<void> {
@@ -109,6 +110,10 @@ export async function reattachUserAgents(input: {
   if (!Array.isArray(roster)) throw new Error("Native carried-agent roster is not an array");
   const registrations = [];
   for (const store of stores) {
+    if (!roster.some(row => record(row) && row.id === store.agentId) && await input.retainsUnregistered?.(store.agentId) === true) {
+      input.log(`[migration-rsync] kept archived project agent store unregistered agentId=${store.agentId}`);
+      continue;
+    }
     const registration = await carriedAgentRegistration(store, roster, input.resolveCarriedWorkspace);
     if (requiresWorkspaceAuthority(registration) && (!input.env.OPENCLAW_STATE_DIR || registration.agentDir !==
         path.join(input.env.OPENCLAW_STATE_DIR, "agents", store.agentId, "agent"))) {

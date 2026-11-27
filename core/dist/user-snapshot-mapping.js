@@ -91,6 +91,13 @@ export async function collectStoredProjectAgentStates(state, uid, slug) {
     ]);
     return projectAgentStatesFrom(projects.map(storedProjectAgentSource), projectSecrets);
 }
+export function archivedAgentProjectIds(uid, projects) {
+    return projects.filter(project => project.ownerUid === uid && projectAgentConfigured(project.agent) &&
+        (project.status === "archived" || project.commercialLifecycleStatus === "archived")).map(project => project.projectSlug);
+}
+export async function collectArchivedAgentProjectIds(state, uid, slug) {
+    return archivedAgentProjectIds(uid, await state.workspaces.projects.list(slug));
+}
 function projectAgentStatesFrom(projects, projectSecrets) {
     const credentials = new Map(projectSecrets.flatMap((secret) => secret.kind === "connector" || !secret.projectId ? [] : [[secret.projectId, secret]]));
     const out = [];

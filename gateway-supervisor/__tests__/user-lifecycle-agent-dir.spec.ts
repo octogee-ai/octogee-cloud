@@ -338,6 +338,30 @@ describe("user lifecycle config patch agent directories", () => {
       });
     });
 
+    it("detaches an archived project's agent and keeps its store and state folder for its owner's next move", async () => {
+      await withRuntimeMock(async ({ tempRoot, agentsDir }) => {
+        process.env.OPENCLAW_STATE_DIR = tempRoot;
+        const { database } = await seedAgentStates(tempRoot, agentsDir);
+        const agentsDelete = vi.fn(async ({ agentId }: { agentId: string }) => ({ ok: true as const, agentId, removedBindings: 0 }));
+        const agentsDetach = vi.fn(async ({ agentId }: { agentId: string }) => ({ ok: true as const, agentId, removedBindings: 0 }));
+        const archivedSnapshot = { ...provisioningSnapshot, archivedProjectIds: ["orbit"] };
+        const { buildBrokeredLifecycleAdapter } = await import("../lib/user-lifecycle-broker-adapter.js");
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient(archivedSnapshot),
+          rpc: { ...retirementRpc(agentsDelete), agentsDetach } as unknown as GatewayRpcClient,
+          log: vi.fn(),
+          procRoot: await procRootHolding(tempRoot, []),
+        });
+
+        await adapter.applyAddUserConfigPatch(archivedSnapshot, { _coachPersonalToken: "pat-1" }, { evictionBatch: ["bob"] });
+
+        expect(agentsDetach).toHaveBeenCalledWith({ agentId: retiredId });
+        expect(agentsDelete).not.toHaveBeenCalledWith(expect.objectContaining({ agentId: retiredId }));
+        expect(readLocalAgentFixtureState(database(retiredId))).toBe(retiredId);
+        expect(agentsDelete).toHaveBeenCalledWith({ agentId: evictedId, deleteFiles: false });
+      });
+    });
+
     it("removes a retired agent's state folder when the roster no longer has the agent", async () => {
       await withRuntimeMock(async ({ tempRoot, agentsDir }) => {
         process.env.OPENCLAW_STATE_DIR = tempRoot;

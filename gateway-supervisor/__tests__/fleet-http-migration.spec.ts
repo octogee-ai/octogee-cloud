@@ -3931,6 +3931,57 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(adapter.releaseAgent).not.toHaveBeenCalled();
   });
 
+  describe("a user with one active and one archived project agent on a shared source", () => {
+    const coach = "octogee-chris-coach", active = "octogee-chris-proj-one-coach", archived = "octogee-chris-proj-shelved-coach";
+    const anchors = [coach, active, archived].map(agentId => ({ agentId, storeId: "1514f000-4540-4f4e-92a1-831adeac3d5b", schema: "octogee_agent_fixture" }));
+
+    async function sharedSource(mode: "pre" | "final", migrationId: string, onDisk: readonly string[]) {
+      const stateDir = await mkTempRoot();
+      for (const id of onDisk) await writeStore(stateDir, `agents/${id}/agent/openclaw-agent.sqlite`, () => {});
+      spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
+      const pushed = pushRsync(stateDir, migrationId, { mode, surgeSourceOpenClawHeld: async () => false });
+      Object.assign(pushed.adapter, {
+        isIsolatedGateway: () => false,
+        listExportPaths: vi.fn(async () => [coach, active].filter(id => onDisk.includes(id)).map(id => ({ cwd: stateDir, path: path.join("agents", id) }))),
+        sourceMigrationAgentAnchors: vi.fn(async () => anchors),
+      });
+      return pushed;
+    }
+
+    it("carries the archived agent's kept store with the active agents in the final push", async () => {
+      const { handler, adapter, req } = await sharedSource("final", "shared-archived-carried", [coach, active, archived]);
+      const response = mkResponse();
+
+      await handler(req, response.res, vi.fn());
+
+      expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
+      const args = spawnMock.mock.calls[0]![1] as string[];
+      for (const id of [coach, active, archived]) expect(args.some(arg => arg.endsWith(`/./agents/${id}/agent/.octogee-snapshot`))).toBe(true);
+      expect(adapter.detachSourceAgents).toHaveBeenCalledExactlyOnceWith("chris", [coach, active, archived], expect.any(AbortSignal));
+    });
+
+    it("refuses the pre-sync push, before the source is quiesced, when an authorized agent has no store on the source", async () => {
+      const { handler, adapter, req } = await sharedSource("pre", "shared-archived-purged", [coach, active]);
+      const response = mkResponse();
+
+      await handler(req, response.res, vi.fn());
+
+      expect(response.getStatus()).toBe(500);
+      expect(response.getBody()).toMatchObject({ message: `shared source holds no agent store for authorized agents: [${archived}]` });
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(adapter.releaseAgent).not.toHaveBeenCalled();
+    });
+
+    it("pre-syncs when every authorized agent's store is on the source", async () => {
+      const { handler, req } = await sharedSource("pre", "shared-archived-kept", [coach, active, archived]);
+      const response = mkResponse();
+
+      await handler(req, response.res, vi.fn());
+
+      expect(response.getStatus(), JSON.stringify(response.getBody())).toBe(200);
+    });
+  });
+
   it("pushes files only during pre-sync without snapshotting or transferring agent databases", async () => {
     const stateDir = await mkTempRoot();
     await writeStore(stateDir, CARRIED_STORE, () => {});
@@ -4786,7 +4837,7 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
     expect(target.deps.releaseSurgeReadiness).toHaveBeenCalledTimes(ownerChanged ? 0 : 1);
   });
 
-  it.each(["active", "disabled", "missing-token", "owner-changed", "hold-lost"] as const)("checks current ownership before admitting a carried project absent from a fresh user roster: %s", async mode => {
+  it.each(["active", "archived", "disabled", "missing-token", "owner-changed", "hold-lost"] as const)("checks current ownership before admitting a carried project absent from a fresh user roster: %s", async mode => {
     const importDir = await mkTempRoot(), procRoot = await mkTempRoot();
     let held = true;
     const agentId = "octogee-chris-proj-demo-coach";
@@ -4806,18 +4857,20 @@ describe("PostgreSQL agent anchors across an rsync carry", () => {
       adapter: { ...target.adapter, loadUserSnapshot: vi.fn(async () => {
         if (mode === "hold-lost") held = false;
         return { ...RESTORE_SNAPSHOT, uid: mode === "owner-changed" ? "other-owner" : "uid-chris",
-          projectAgents: [{ projectId: "demo", enabled: mode !== "disabled", status: "ready" as const,
+          projectAgents: mode === "archived" ? [] : [{ projectId: "demo", enabled: mode !== "disabled", status: "ready" as const,
             ...(mode === "missing-token" ? {} : { token: "fixture-project-token" }) }],
+          ...(mode === "archived" ? { archivedProjectIds: ["demo"] } : {}),
         };
       }) }, deps: { ...target.deps, procRoot, runOpenClaw } });
     await stageSnapshot(stageDir, db => db.exec("INSERT INTO transcript_events VALUES ('project'), ('project')"), agentId);
     spawnMock.mockReturnValueOnce(mkFakeChild({ exitCode: 0 }));
 
     const result = await finishImport(deps, "mig-user-unconfigured-project");
+    const admitted = mode === "active" || mode === "archived";
 
-    expect(result.getStatus(), JSON.stringify(result.getBody())).toBe(mode === "active" ? 200 : 500);
+    expect(result.getStatus(), JSON.stringify(result.getBody())).toBe(admitted ? 200 : 500);
     expect(runOpenClaw).toHaveBeenCalledTimes(mode === "active" ? 2 : 1);
-    expect(target.deps.releaseSurgeReadiness).toHaveBeenCalledTimes(mode === "active" ? 1 : 0);
+    expect(target.deps.releaseSurgeReadiness).toHaveBeenCalledTimes(admitted ? 1 : 0);
     expect(rowCount(path.join(agentDir, "openclaw-agent.sqlite"))).toBe(2);
   });
 

@@ -35,6 +35,7 @@ export interface UserSnapshot {
   projectCheckoutScope?: FleetBrokerProjectCheckoutScope;
   projects?: FleetBrokerProjectRestore[];
   projectAgents?: FleetBrokerProjectAgent[];
+  archivedProjectIds?: string[];
   byotActive?: boolean;
   // The operator's house model dial, stamped by the fleet broker; drives
   // the house pin and the BYOK fallback baseline at mount-time reassert.

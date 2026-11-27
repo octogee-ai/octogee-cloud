@@ -8,6 +8,7 @@ import {
   mapProjectChannelDoc,
   mapProjectAgentState,
   collectStoredProjectAgentStates,
+  collectArchivedAgentProjectIds,
   readAgentModelSelections,
 } from "./user-snapshot-mapping.js";
 import { MalformedRecordError } from "./platform-state/errors.js";
@@ -261,6 +262,20 @@ describe("collectStoredProjectAgentStates: project agents", () => {
     });
 
     await expect(collectStoredProjectAgentStates(store, "uid-1", "alice")).rejects.toBeInstanceOf(MalformedRecordError);
+  });
+});
+
+describe("collectArchivedAgentProjectIds", () => {
+  it("names the owner's archived projects that have an agent, whatever their bot credential", async () => {
+    const store = createDocumentFixtureStore({
+      "workspaces/alice/projects/live": { ownerUid: "uid-1", agent: {}, status: "building" },
+      "workspaces/alice/projects/paused": { ownerUid: "uid-1", agent: {}, status: "building", commercialLifecycle: { status: "archived" } },
+      "workspaces/alice/projects/shelved": { ownerUid: "uid-1", agent: {}, status: "archived" },
+      "workspaces/alice/projects/plain": { ownerUid: "uid-1", status: "archived" },
+      "workspaces/alice/projects/shared": { ownerUid: "uid-2", agent: {}, status: "archived" },
+    });
+
+    expect((await collectArchivedAgentProjectIds(store, "uid-1", "alice")).sort()).toEqual(["paused", "shelved"]);
   });
 });
 

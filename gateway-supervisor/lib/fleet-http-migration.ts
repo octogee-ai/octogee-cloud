@@ -73,7 +73,7 @@ import {
   SIGNATURE_HEADER,
 } from "@octogee/shared/types/fleet-controller";
 import type { FleetBrokerAgentAnchor } from "@octogee/shared/types/fleet-broker";
-import { isValidProjectId, isValidUsername, parseAgentId } from "@octogee/shared/types/identity";
+import { isValidProjectId, isValidUsername, parseAgentId, projectAgentId } from "@octogee/shared/types/identity";
 import {
   findUnreadableStore,
   listSqliteStores,
@@ -1497,7 +1497,21 @@ async function sharedSourceExportPaths(deps: MigrationHandlerDeps, body: PushRsy
   return [...files, ...agents];
 }
 
+async function assertSharedSourceHoldsAuthorizedAgents(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody): Promise<void> {
+  const readAnchors = deps.adapter.sourceMigrationAgentAnchors;
+  if (!readAnchors) throw new Error("Shared source export requires current migration anchor authority");
+  const authority = await readAnchors(body.slug, body.migrationId);
+  if (!authorityBelongsToUser(authority, body.slug)) throw new Error("Shared source migration anchor authority does not belong to the user");
+  const stateDir = resolveOpenClawStateDir();
+  const held = await authorizedAgentSources(stateDir, authority, []);
+  const missing = authority.map(anchor => anchor.agentId).filter(agentId => !held.some(source => source.path === path.join("agents", agentId)));
+  if (missing.length > 0) {
+    throw new Error(`shared source holds no agent store for authorized agents: [${missing.sort().join(", ")}]`);
+  }
+}
+
 async function sourceExportInventory(deps: MigrationHandlerDeps, body: PushRsyncStateRequestBody, mode: MigrationTransferMode, signal: AbortSignal) {
+  if (mode === "pre" && deps.adapter.isIsolatedGateway?.() === false) await assertSharedSourceHoldsAuthorizedAgents(deps, body);
   const sourceHeld = mode === "final" && await deps.surgeSourceOpenClawHeld?.({ migrationId: body.migrationId, slug: body.slug }) === true;
   const retainedManifest = mode === "final" ? await readActivationManifest(OPENCLAW_DIR, body.slug).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
@@ -2939,6 +2953,16 @@ async function upgradeCarriedAgents(input: StagedImportInput, authorized: NonNul
     log: message => input.log(message), run: input.deps.runOpenClaw });
 }
 
+async function carriedArchivedProjectAgent(input: StagedImportInput, agentId: string): Promise<boolean> {
+  const parsed = parseAgentId(agentId);
+  if (parsed.kind !== "project" || parsed.username !== input.slug) return false;
+  const uid = await input.deps.adapter.uidForSlug(input.slug);
+  if (!uid) throw new Error("Carried user workspace has no current owner");
+  const snapshot = await input.deps.adapter.loadUserSnapshot(uid, { refresh: true });
+  if (!snapshot || snapshot.uid !== uid || snapshot.slug !== input.slug) throw new Error("Carried user workspace ownership changed");
+  return (snapshot.archivedProjectIds ?? []).some(projectId => projectAgentId(input.slug, projectId) === agentId);
+}
+
 async function reattachOfflineUserAgents(input: StagedImportInput, prepared: PreparedAgentStores, offlineTarget: UserImportTarget): Promise<void> {
   if (input.heldTarget || prepared.stores.length === 0) return;
   const { deps, session, log } = input;
@@ -2949,6 +2973,7 @@ async function reattachOfflineUserAgents(input: StagedImportInput, prepared: Pre
     env: { ...process.env, OPENCLAW_STATE_DIR: session.importDir, OPENCLAW_DIR: session.importDir, OPENCLAW_CONFIG_PATH: openClawConfigPath() },
     run: deps.runOpenClaw,
     resolveCarriedWorkspace: agentId => carriedUserWorkspace(input, agentId),
+    retainsUnregistered: agentId => carriedArchivedProjectAgent(input, agentId),
     signal: input.signal,
     log,
     assertHeld: async () => {

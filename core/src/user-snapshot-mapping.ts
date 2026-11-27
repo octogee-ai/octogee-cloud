@@ -121,6 +121,19 @@ export async function collectStoredProjectAgentStates(
   return projectAgentStatesFrom(projects.map(storedProjectAgentSource), projectSecrets);
 }
 
+export function archivedAgentProjectIds(uid: string, projects: readonly WorkspaceProject[]): string[] {
+  return projects.filter(project => project.ownerUid === uid && projectAgentConfigured(project.agent) &&
+    (project.status === "archived" || project.commercialLifecycleStatus === "archived")).map(project => project.projectSlug);
+}
+
+export async function collectArchivedAgentProjectIds(
+  state: Pick<PlatformStateRepositories, "workspaces">,
+  uid: string,
+  slug: string,
+): Promise<string[]> {
+  return archivedAgentProjectIds(uid, await state.workspaces.projects.list(slug));
+}
+
 function projectAgentStatesFrom(
   projects: readonly ProjectAgentSource[],
   projectSecrets: Awaited<ReturnType<SecretsRepository["list"]>>,

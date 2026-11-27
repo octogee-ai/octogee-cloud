@@ -6,7 +6,7 @@ import { userEntitlements } from "@octogee/shared/types/user-entitlements";
 import { readWorkspaceMigrationMarker } from "@octogee/shared/types/workspace-migration";
 import { readUserRestoreAuthoritySnapshot } from "./fleet-state.js";
 import { isolatedRuntimeMutationFenced } from "./gateway-retirement-claim.js";
-import { collectStoredProjectAgentStates, readByotSnapshotProjection } from "./user-snapshot-mapping.js";
+import { collectArchivedAgentProjectIds, collectStoredProjectAgentStates, readByotSnapshotProjection } from "./user-snapshot-mapping.js";
 function readPath(obj, dotted) {
     let cur = obj;
     for (const part of dotted.split(".")) {
@@ -207,12 +207,13 @@ export async function loadSnapshot(deps, userRecord, account, options) {
     if (!slug || !isValidUsername(slug))
         return null;
     const projectCheckoutScope = projectCheckoutScopeForGatewayRoot(options.gatewayData, options.gatewayId, uid, slug);
-    const [collectedChannels, projects, projectAgents, defaultAgent, agentData, credentialProjection, runtimeReset, restoreAuthority] = await Promise.all([
+    const [collectedChannels, projects, projectAgents, archivedProjectIds, defaultAgent, agentData, credentialProjection, runtimeReset, restoreAuthority] = await Promise.all([
         collectChannelBindings(store, slug),
         projectCheckoutScope === "workspace-and-projects"
             ? collectProjects(deps, slug)
             : Promise.resolve([]),
         collectStoredProjectAgentStates(store, uid, slug),
+        collectArchivedAgentProjectIds(store, uid, slug),
         defaultAgentMattermostSecret(store, uid),
         records.userDocuments.agent(uid),
         readByotSnapshotProjection(store.users, uid),
@@ -240,6 +241,7 @@ export async function loadSnapshot(deps, userRecord, account, options) {
         projectCheckoutScope,
         projects,
         ...(projectAgents.length > 0 ? { projectAgents } : {}),
+        ...(archivedProjectIds.length > 0 ? { archivedProjectIds } : {}),
         ...snapshotDefaultAgentFields(defaultAgent),
         ...snapshotDefaultAgentIdentity(agentData),
         ...(credentialProjection.systemConfig ? { systemConfig: credentialProjection.systemConfig } : {}),

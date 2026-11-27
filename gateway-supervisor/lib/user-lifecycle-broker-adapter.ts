@@ -393,11 +393,15 @@ async function removeRetiredAgentState(ctx: BrokerCtx, agentId: string, logPrefi
   }
 }
 
+function archivedProjectAgentIds(snapshot: Pick<FleetBrokerUserSnapshot, "slug" | "archivedProjectIds">): ReadonlySet<string> {
+  return new Set((snapshot.archivedProjectIds ?? []).map(projectId => projectAgentId(snapshot.slug, projectId)));
+}
+
 async function releaseAgentsAndInvalidateCache(
   ctx: BrokerCtx,
   agentIds: readonly string[],
   logPrefix: string,
-  options: { purgeStore?: boolean } = {},
+  options: { purgeStore?: boolean; archivedAgentIds?: ReadonlySet<string> } = {},
 ): Promise<void> {
   if (agentIds.length === 0) return;
   const postgres = postgresAgentStoreConfigured();
@@ -406,11 +410,14 @@ async function releaseAgentsAndInvalidateCache(
     for (const agentId of agentIds) {
       try {
         const file = path.join(resolveOpenClawStateDir(), "agents", agentId, "agent", "openclaw-agent.sqlite");
+        const archived = options.archivedAgentIds?.has(agentId) === true;
+        const purge = options.purgeStore === true && !archived;
         await deleteRosterAgents([agentId], {
           rpc: ctx.rpc, log: ctx.log, logPrefix,
-          preserveStore: !options.purgeStore && (postgres || readPostgresAgentAnchor(file) !== null),
+          preserveStore: archived || (!purge && (postgres || readPostgresAgentAnchor(file) !== null)),
         });
-        if (options.purgeStore) await removeRetiredAgentState(ctx, agentId, logPrefix);
+        if (purge) await removeRetiredAgentState(ctx, agentId, logPrefix);
+        else if (archived) ctx.log(`${logPrefix} kept archived project agent store agentId=${agentId}`);
       } catch (error) { failures.push(error); }
     }
     if (failures.length) throw new AggregateError(failures, failures.map(error => error instanceof Error ? error.message : String(error)).join("; "));
@@ -482,6 +489,7 @@ async function deleteSupersededUserAgents(
     slug: string;
     evictionSlugs: readonly string[];
     keepAgentIds: readonly string[];
+    archivedAgentIds?: ReadonlySet<string>;
     logPrefix: string;
     purpose: "reconcile" | "import";
   },
@@ -497,7 +505,7 @@ async function deleteSupersededUserAgents(
     ctx,
     userAgentIdsInRoster(current, input.slug).filter((agentId) => !keep.has(agentId)),
     input.logPrefix,
-    { purgeStore: input.purpose === "reconcile" },
+    { purgeStore: input.purpose === "reconcile", archivedAgentIds: input.archivedAgentIds },
   );
 }
 
@@ -533,7 +541,7 @@ async function reconcileUserRosterAgents(
   slug: string,
   evictionSlugs: readonly string[],
   keepAgentIds: readonly string[],
-  input: { agentEntries: readonly unknown[]; assignedIdentity?: AssignedWorkspaceIdentityReplay },
+  input: { agentEntries: readonly unknown[]; assignedIdentity?: AssignedWorkspaceIdentityReplay; archivedAgentIds: ReadonlySet<string> },
 ): Promise<void> {
   await input.assignedIdentity?.detachRetired?.();
   const logPrefix = `[add:${slug}]`;
@@ -541,6 +549,7 @@ async function reconcileUserRosterAgents(
     slug,
     evictionSlugs,
     keepAgentIds,
+    archivedAgentIds: input.archivedAgentIds,
     logPrefix,
     purpose: "reconcile",
   });
@@ -615,6 +624,7 @@ function toUserSnapshot(snapshot: FleetBrokerUserSnapshot): UserSnapshot {
     projectCheckoutScope: snapshot.projectCheckoutScope,
     projects: snapshot.projects,
     projectAgents: snapshot.projectAgents,
+    ...(snapshot.archivedProjectIds ? { archivedProjectIds: snapshot.archivedProjectIds } : {}),
     byotActive: snapshot.byotActive,
     freeTierModelRef: snapshot.freeTierModelRef,
     builderAgentDefault: snapshot.builderAgentDefault,
@@ -1643,7 +1653,7 @@ async function applyAddUserConfigPatch(
     snapshot.slug,
     evictionSlugs,
     brokerAgentIds,
-    { agentEntries: userAgentEntries, assignedIdentity },
+    { agentEntries: userAgentEntries, assignedIdentity, archivedAgentIds: archivedProjectAgentIds(brokerSnapshot) },
   );
   await sharedAnchors?.report();
   await materializeUserBrokerProfiles(brokerAgentIds, snapshot.slug, ctx.log, secretMaterial);
@@ -1824,7 +1834,7 @@ async function reconcileConfiguredUserProjectAgents(
   for (const accountId of retiredAccountIds) await ctx.rpc.channelsStop({ channel: "mattermost", accountId });
   const removedSecrets = await updateMattermostAccountSecrets(OPENCLAW_DIR, { remove: [...new Set([...projectSecrets.remove, ...retiredAccountIds])] });
   secretMaterial.noteIf(removedSecrets.changed, "Mattermost account secrets file changed");
-  await releaseAgentsAndInvalidateCache(ctx, retiredAgentIds, logPrefix, { purgeStore: true });
+  await releaseAgentsAndInvalidateCache(ctx, retiredAgentIds, logPrefix, { purgeStore: true, archivedAgentIds: archivedProjectAgentIds(brokerSnapshot) });
   await settleProjectAgentActivations(ctx, {
     snapshot, projectAgents: preparedProjectAgents, channels: brokerSnapshot.channels, baseline, secretMaterial, signal: options.signal,
     activate: async () => {
