@@ -596,7 +596,7 @@ async function releaseSource(state, deps, migrationId) {
 const TARGET_HOLDS_STORES_DURING_ROLLBACK = new Set(["source-flushed", "final-synced", "target-verified", "cutover-done"]);
 const RETURN_SOURCE_STORES = "rollback:return-source-stores";
 async function returnSourceStores(state, deps) {
-    if (!deps.prepareRollbackSource)
+    if (!TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase) || !deps.prepareRollbackSource)
         return null;
     await report(deps, { name: RETURN_SOURCE_STORES, status: "running" });
     try {
@@ -661,11 +661,9 @@ async function tryRollback(state, deps, migrationId, transports) {
     }
     if (failures.length > 0)
         return { rolledBack: false, error: failures.join("; ") };
-    if (TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase)) {
-        const unreturned = await returnSourceStores(state, deps);
-        if (unreturned)
-            return { rolledBack: false, error: unreturned };
-    }
+    const unreturned = await returnSourceStores(state, deps);
+    if (unreturned)
+        return { rolledBack: false, error: unreturned };
     if (transports.quiesceStarted) {
         const unreleased = await releaseSource(state, deps, migrationId);
         if (unreleased)

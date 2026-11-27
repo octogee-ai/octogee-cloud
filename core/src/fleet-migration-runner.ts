@@ -871,7 +871,7 @@ const TARGET_HOLDS_STORES_DURING_ROLLBACK: ReadonlySet<MigrationPhase> =
 const RETURN_SOURCE_STORES = "rollback:return-source-stores";
 
 async function returnSourceStores(state: MigrationState, deps: MigrationRunnerDeps): Promise<string | null> {
-  if (!deps.prepareRollbackSource) return null;
+  if (!TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase) || !deps.prepareRollbackSource) return null;
   await report(deps, { name: RETURN_SOURCE_STORES, status: "running" });
   try {
     await deps.prepareRollbackSource(state.fromGatewayId, state.slug);
@@ -941,10 +941,8 @@ async function tryRollback(
     }
   }
   if (failures.length > 0) return { rolledBack: false, error: failures.join("; ") };
-  if (TARGET_HOLDS_STORES_DURING_ROLLBACK.has(state.phase)) {
-    const unreturned = await returnSourceStores(state, deps);
-    if (unreturned) return { rolledBack: false, error: unreturned };
-  }
+  const unreturned = await returnSourceStores(state, deps);
+  if (unreturned) return { rolledBack: false, error: unreturned };
   if (transports.quiesceStarted) {
     const unreleased = await releaseSource(state, deps, migrationId);
     if (unreleased) return { rolledBack: false, error: unreleased };
