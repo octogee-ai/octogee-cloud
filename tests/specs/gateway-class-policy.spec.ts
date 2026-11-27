@@ -27,6 +27,7 @@ const userStructuredTools = [
   "octogee_project_preview",
   "octogee_project_run_status",
   "octogee_project_publish",
+  "octogee_project_rollback",
   "octogee_project_services",
   "octogee_project_server_logs",
   "octogee_project_attach_services",
