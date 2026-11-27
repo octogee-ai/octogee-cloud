@@ -258,6 +258,7 @@ export interface FleetBrokerUserSnapshot {
     projectCheckoutScope?: FleetBrokerProjectCheckoutScope;
     projects: FleetBrokerProjectRestore[];
     projectAgents?: FleetBrokerProjectAgent[];
+    archivedProjectIds?: string[];
     freeTierModelRef?: string;
     builderAgentDefault?: {
         primary: string;

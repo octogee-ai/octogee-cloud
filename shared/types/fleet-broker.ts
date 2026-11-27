@@ -302,6 +302,7 @@ export interface FleetBrokerUserSnapshot {
   projectCheckoutScope?: FleetBrokerProjectCheckoutScope;
   projects: FleetBrokerProjectRestore[];
   projectAgents?: FleetBrokerProjectAgent[];
+  archivedProjectIds?: string[];
   // The operator's house model dial (platformConfig/models), resolved
   // server-side: the house pin for house_only plans and the BYOK fallback.
   // Fingerprinted — a dial flip re-ensures mounted house-only users.

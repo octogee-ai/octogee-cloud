@@ -22,6 +22,7 @@ export interface UserSnapshot {
     projectCheckoutScope?: FleetBrokerProjectCheckoutScope;
     projects?: FleetBrokerProjectRestore[];
     projectAgents?: FleetBrokerProjectAgent[];
+    archivedProjectIds?: string[];
     byotActive?: boolean;
     freeTierModelRef?: string;
     builderAgentDefault?: {

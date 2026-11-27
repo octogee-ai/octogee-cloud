@@ -64,6 +64,11 @@ async function carriedAgentRegistration(store: CarriedAgentStore, roster: unknow
   return { agentId: store.agentId, workspace, agentDir, configured: false };
 }
 
+async function keptUnregistered(agentId: string, roster: readonly unknown[], retainsUnregistered?: (agentId: string) => Promise<boolean>): Promise<boolean> {
+  if (!retainsUnregistered || roster.some(row => record(row) && row.id === agentId)) return false;
+  return retainsUnregistered(agentId);
+}
+
 export async function reattachUserAgents(input: {
   stores: readonly CarriedAgentStore[];
   env: NodeJS.ProcessEnv;
@@ -71,6 +76,7 @@ export async function reattachUserAgents(input: {
   signal?: AbortSignal;
   run?: OpenClawCommand;
   resolveCarriedWorkspace?: CarriedWorkspaceResolver;
+  retainsUnregistered?: (agentId: string) => Promise<boolean>;
   diagnosticIdentity?: CarriedAgentDiagnosticIdentity;
   log: (message: string, fields?: LogContext) => void;
 }): Promise<void> {
@@ -109,6 +115,10 @@ export async function reattachUserAgents(input: {
   if (!Array.isArray(roster)) throw new Error("Native carried-agent roster is not an array");
   const registrations = [];
   for (const store of stores) {
+    if (await keptUnregistered(store.agentId, roster, input.retainsUnregistered)) {
+      input.log(`[migration-rsync] kept archived project agent store unregistered agentId=${store.agentId}`);
+      continue;
+    }
     const registration = await carriedAgentRegistration(store, roster, input.resolveCarriedWorkspace);
     if (requiresWorkspaceAuthority(registration) && (!input.env.OPENCLAW_STATE_DIR || registration.agentDir !==
         path.join(input.env.OPENCLAW_STATE_DIR, "agents", store.agentId, "agent"))) {
