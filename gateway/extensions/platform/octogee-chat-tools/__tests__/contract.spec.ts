@@ -654,6 +654,115 @@ describe("plugin contract", () => {
     });
   });
 
+  const boundChannel = "bbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const voiceConsultContext = {
+    runId: "talk-realtime-relay-consult-0b6c2f4e-8f1a-4c39-9d7e-2f0d1c3a4b5e",
+    agentId: "octogee-bob-coach",
+    sessionKey: `agent:octogee-bob-coach:mattermost:group:${boundChannel}`,
+    sessionId: "e594e354-37a4-4c17-8ca3-99f15e060706",
+    trigger: "user",
+    channel: "webchat",
+    messageProvider: "webchat",
+    channelId: boundChannel,
+    chatId: boundChannel,
+    senderId: "gateway-client",
+  };
+  const voiceConsultEvent = { channelId: boundChannel, senderId: "gateway-client", senderIsOwner: true };
+
+  function channelRunOriginMethod(api: any) {
+    const call = api.registerGatewayMethod.mock.calls.find(
+      ([name]: [string]) => name === "octogee.activity.channelRunOrigin",
+    );
+    return (params: Record<string, unknown>) => {
+      let response: unknown;
+      call[1]({ params, respond: (_ok: boolean, payload: unknown) => { response = payload; } });
+      return response;
+    };
+  }
+
+  it("verifies a gateway-client voice consult on a bound Mattermost channel through the gateway's own binding", async () => {
+    sessionContext.read.mockReset().mockResolvedValue({ authorized: true });
+    const { default: plugin } = await import("../index.js");
+    const { api, hooks, errors } = buildFakeApi();
+    plugin.register(api);
+    const guard = hooks.find((entry) => entry.name === "before_agent_run")?.handler;
+
+    await expect(guard?.(voiceConsultEvent, voiceConsultContext)).resolves.toBeUndefined();
+    expect(sessionContext.read).toHaveBeenCalledWith({
+      agentId: "octogee-bob-coach",
+      accountId: "bob-coach",
+      channelId: boundChannel,
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it("never records a gateway client's self-reported sender as a Mattermost run starter", async () => {
+    sessionContext.read.mockReset().mockResolvedValue({ authorized: true });
+    const { default: plugin } = await import("../index.js");
+    const { api, hooks } = buildFakeApi();
+    plugin.register(api);
+    const guard = hooks.find((entry) => entry.name === "before_agent_run")?.handler;
+    const claimedMattermostUser = "cccccccccccccccccccccccccc";
+
+    await expect(guard?.(
+      { ...voiceConsultEvent, senderId: claimedMattermostUser },
+      { ...voiceConsultContext, senderId: claimedMattermostUser },
+    )).resolves.toBeUndefined();
+    expect(channelRunOriginMethod(api)({ sessionKey: voiceConsultContext.sessionKey })).toEqual({ starterMmUserId: null });
+  });
+
+  it("refuses a gateway-client run on a Mattermost session the gateway cannot tie to one bound account", async () => {
+    const { default: plugin } = await import("../index.js");
+    const { api, hooks, errors } = buildFakeApi();
+    plugin.register(api);
+    const guard = hooks.find((entry) => entry.name === "before_agent_run")?.handler;
+    const unboundChannel = "dddddddddddddddddddddddddd";
+    const sender = "pppppppppppppppppppppppppp";
+
+    for (const ctx of [
+      { ...voiceConsultContext, sessionKey: `agent:octogee-bob-coach:mattermost:group:${unboundChannel}`, channelId: unboundChannel, chatId: unboundChannel },
+      { ...voiceConsultContext, agentId: "octogee-mike-coach" },
+      { ...voiceConsultContext, chatId: unboundChannel },
+      { ...voiceConsultContext, sessionKey: `agent:octogee-bob-coach:mattermost:direct:${sender}`, channelId: sender, chatId: sender },
+      { ...voiceConsultContext, channel: "mattermost" },
+    ]) {
+      sessionContext.read.mockReset().mockResolvedValue({ authorized: true });
+      await expect(guard?.(voiceConsultEvent, ctx)).resolves.toEqual({
+        outcome: "block",
+        reason: "mattermost-session-context-unverified",
+        message: expect.any(String),
+      });
+      expect(sessionContext.read).not.toHaveBeenCalled();
+    }
+    expect(errors).toHaveLength(5);
+  });
+
+  it("accepts a threaded voice consult on a bound channel and refuses one the broker does not authorize", async () => {
+    const { default: plugin } = await import("../index.js");
+    const { api, hooks, errors } = buildFakeApi();
+    plugin.register(api);
+    const guard = hooks.find((entry) => entry.name === "before_agent_run")?.handler;
+    const root = "rrrrrrrrrrrrrrrrrrrrrrrrrr";
+    const threaded = {
+      ...voiceConsultContext,
+      sessionKey: `${voiceConsultContext.sessionKey}:thread:${root}`,
+      channelId: `${boundChannel}:thread:${root}`,
+      chatId: `${boundChannel}:thread:${root}`,
+    };
+
+    sessionContext.read.mockReset().mockResolvedValue({ authorized: true });
+    await expect(guard?.({ ...voiceConsultEvent, channelId: threaded.channelId }, threaded)).resolves.toBeUndefined();
+    expect(sessionContext.read).toHaveBeenCalledWith({
+      agentId: "octogee-bob-coach",
+      accountId: "bob-coach",
+      channelId: boundChannel,
+    });
+
+    sessionContext.read.mockReset().mockRejectedValue(new Error("forbidden"));
+    await expect(guard?.(voiceConsultEvent, voiceConsultContext)).resolves.toMatchObject({ outcome: "block" });
+    expect(errors).toEqual([expect.stringContaining("forbidden")]);
+  });
+
   it("openclaw.plugin.json contracts.tools matches the names registered at runtime (OC 2026.5.2 manifest gate)", async () => {
     // OpenClaw 2026.5.2 introduced a manifest contract: every tool registered
     // via api.registerTool(...) must also appear in the plugin manifest's

@@ -27,7 +27,11 @@ import {
   readWorkspaceAvatarBase64,
   resolveIdentityLane,
 } from "./identity-client.js";
-import { createSessionContextClient, SessionContextError } from "./session-context-client.js";
+import {
+  createSessionContextClient,
+  SessionContextError,
+  type SessionContextReadInput,
+} from "./session-context-client.js";
 
 // ── Plugin config ──────────────────────────────────────────────────────────
 interface PluginConfig {
@@ -310,9 +314,64 @@ function completeRunIdentity(ctx: PluginHookContext): ctx is PluginHookContext &
   return typeof ctx.chatId === "string" && ctx.chatId.length > 0;
 }
 
+const GATEWAY_CLIENT_PROVIDER = "webchat";
+const BOUND_CONVERSATION_SESSION =
+  /^agent:([^:]+):mattermost:(?:group|channel):([a-z0-9]{26})(?::thread:([a-z0-9]{26}))?$/u;
+
+function gatewayClientRun(ctx: PluginHookContext): boolean {
+  return ctx.messageProvider === GATEWAY_CLIENT_PROVIDER && ctx.channel === GATEWAY_CLIENT_PROVIDER &&
+    ctx.accountId === undefined;
+}
+
+function boundConversationIdentity(
+  ctx: PluginHookContext,
+  bindings: unknown,
+): { agentId: string; accountId: string; channelId: string } | null {
+  if (typeof ctx.sessionKey !== "string" || typeof ctx.agentId !== "string") return null;
+  const session = BOUND_CONVERSATION_SESSION.exec(ctx.sessionKey);
+  const [, sessionAgentId, channelId, threadRootId] = session ?? [];
+  if (!sessionAgentId || !channelId || sessionAgentId !== ctx.agentId) return null;
+  const sessionChatId = threadRootId ? `${channelId}:thread:${threadRootId}` : channelId;
+  if (ctx.chatId !== sessionChatId) return null;
+  const accounts = new Set<string>();
+  for (const entry of Array.isArray(bindings) ? bindings : []) {
+    const binding = eventRecord(entry);
+    const match = eventRecord(binding.match);
+    const peer = eventRecord(match.peer);
+    if (binding.agentId === sessionAgentId && match.channel === "mattermost" && typeof match.accountId === "string" &&
+        match.accountId.length > 0 && peer.kind === "group" && peer.id === channelId) {
+      accounts.add(match.accountId);
+    }
+  }
+  if (accounts.size !== 1) return null;
+  const [accountId] = accounts;
+  return { agentId: sessionAgentId, accountId: accountId!, channelId };
+}
+
+async function verifiedRun(
+  client: SessionContextClient,
+  logger: PluginLogger,
+  identity: SessionContextReadInput,
+  onVerified?: () => void,
+): Promise<PluginHookResult> {
+  try {
+    await client.read(identity);
+    onVerified?.();
+    return undefined;
+  } catch (error) {
+    return blockedMattermostRun(
+      logger,
+      `[chat-tools] Blocking unverified Mattermost run: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 function beforeAgentRunHandler(
   client: SessionContextClient,
   logger: PluginLogger,
+  readBindings: () => unknown,
   recordRunOrigin?: ReturnType<typeof registerChannelRunOrigin>,
 ): (event: unknown, ctx: PluginHookContext) => Promise<PluginHookResult> {
   return async (event, ctx) => {
@@ -322,30 +381,29 @@ function beforeAgentRunHandler(
     if (conflict) {
       return blockedMattermostRun(logger, `[chat-tools] Blocking Mattermost run with conflicting ${conflict}`);
     }
+    if (gatewayClientRun(ctx)) {
+      const identity = boundConversationIdentity(ctx, readBindings());
+      if (!identity) {
+        return blockedMattermostRun(
+          logger,
+          "[chat-tools] Blocking gateway-client run on a Mattermost session without one bound agent account for its channel",
+        );
+      }
+      return verifiedRun(client, logger, identity);
+    }
     if (!completeRunIdentity(ctx)) {
       return blockedMattermostRun(
         logger,
         "[chat-tools] Blocking Mattermost run without agent/account/channel identity",
       );
     }
-    try {
-      const direct = directSessionMetadata(ctx);
-      await client.read({
-        agentId: ctx.agentId,
-        accountId: ctx.accountId,
-        channelId: ctx.chatId,
-        ...(direct ?? {}),
-      });
-      recordRunOrigin?.({ ...ctx, senderId: ctx.senderId ?? runEvent.senderId });
-      return undefined;
-    } catch (error) {
-      return blockedMattermostRun(
-        logger,
-        `[chat-tools] Blocking unverified Mattermost run: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    const direct = directSessionMetadata(ctx);
+    return verifiedRun(
+      client,
+      logger,
+      { agentId: ctx.agentId, accountId: ctx.accountId, channelId: ctx.chatId, ...(direct ?? {}) },
+      () => recordRunOrigin?.({ ...ctx, senderId: ctx.senderId ?? runEvent.senderId }),
+    );
   };
 }
 
@@ -382,10 +440,11 @@ export default definePluginEntry({
     });
     const usersRoot = config.customersRoot || process.env.CUSTOMERS_DIR || "/home/node/.openclaw/customers";
 
-    api.on("before_dispatch", beforeDispatchHandler(sessionContextClient, api.logger, () => api.runtime.config.current().bindings));
+    const readBindings = () => api.runtime.config.current().bindings;
+    api.on("before_dispatch", beforeDispatchHandler(sessionContextClient, api.logger, readBindings));
     api.on("before_prompt_build", beforePromptBuildHandler(sessionContextClient, api.logger));
     const recordRunOrigin = registerChannelRunOrigin(api, sessionContextClient);
-    api.on("before_agent_run", beforeAgentRunHandler(sessionContextClient, api.logger, recordRunOrigin));
+    api.on("before_agent_run", beforeAgentRunHandler(sessionContextClient, api.logger, readBindings, recordRunOrigin));
 
     // ── octogee_chat_search ──────────────────────────────────────────────────
     // OpenClaw calls the factory `(ctx) => tool` per-invocation, so each
