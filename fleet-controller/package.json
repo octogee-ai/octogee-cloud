@@ -35,7 +35,7 @@
     "@types/ws": "8.18.2",
     "supertest": "^7.2.2",
     "typescript": "^7.0.2",
-    "vitest": "^5.1.0",
+    "vitest": "^5.1.1",
     "ws": "8.23.0"
   },
   "overrides": {
