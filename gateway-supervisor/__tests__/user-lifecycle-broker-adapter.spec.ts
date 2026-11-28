@@ -2142,11 +2142,11 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       expect(log).toHaveBeenCalledWith("[import:tester10] secrets.reload — model credential OAuth store restored");
     });
 
-    it("skips secrets.reload when config hot-reload changed SecretRefs and degradedSecretsStatus reports no owner for this user", async () => {
+    it("skips secrets.reload when config hot-reload changed SecretRefs without auth-store writes and degradedSecretsStatus reports no owner for this user", async () => {
       secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
         async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
       );
-      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 0, deferred: [] });
       mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
         elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: true,
       });
@@ -2166,6 +2166,29 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       expect(rpc.degradedSecretsStatus).toHaveBeenCalledOnce();
       expect(rpc.secretsReload).not.toHaveBeenCalled();
       expect(log).toHaveBeenCalledWith("[import:tester10] secrets.reload skipped — config hot-reload resolved secrets");
+    });
+
+    it("reloads secrets on import when broker profiles or OAuth auth stores changed even if config hot-reload succeeded", async () => {
+      secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+        async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+      );
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+        elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: true,
+      });
+      const rpc = {
+        ...importRpc(),
+        degradedSecretsStatus: vi.fn(async () => []),
+      };
+      const log = vi.fn();
+      const adapter = buildBrokeredLifecycleAdapter({
+        client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+      });
+
+      await adapter.activateImportedUser("tester10");
+
+      expect(rpc.degradedSecretsStatus).not.toHaveBeenCalled();
+      expect(rpc.secretsReload).toHaveBeenCalledOnce();
     });
 
     it("reloads secrets when config hot-reload changed SecretRefs but degradedSecretsStatus still reports this user or fails", async () => {
@@ -5298,9 +5321,9 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
       );
     });
 
-    it("skips secrets.reload on mount when config patch added SecretRefs and degradedSecretsStatus reports alice clear", async () => {
+    it("skips secrets.reload on mount when config patch added SecretRefs without auth-store writes and degradedSecretsStatus reports alice clear", async () => {
       secretMocks.updateMattermostAccountSecrets.mockResolvedValueOnce({ changed: true });
-      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 0, deferred: [] });
       const before = { ...mountedConfig, channels: { mattermost: { accounts: {} } } };
       patchMocks.applyConfigPatch.mockImplementationOnce(async (args) => {
         args.buildPatch(before);
@@ -5317,6 +5340,26 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
       expect(rpc.degradedSecretsStatus).toHaveBeenCalledOnce();
       expect(rpc.secretsReload).not.toHaveBeenCalled();
       expect(log).toHaveBeenCalledWith("[add:alice] secrets.reload skipped — config hot-reload resolved secrets");
+    });
+
+    it("reloads secrets on mount when broker profiles were materialized even if config patch added SecretRefs", async () => {
+      secretMocks.updateMattermostAccountSecrets.mockResolvedValueOnce({ changed: true });
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      const before = { ...mountedConfig, channels: { mattermost: { accounts: {} } } };
+      patchMocks.applyConfigPatch.mockImplementationOnce(async (args) => {
+        args.buildPatch(before);
+        return { mode: "rpc" as const, attempts: 1 };
+      });
+      const rpc = {
+        ...rosterRpc(mountedConfig),
+        degradedSecretsStatus: vi.fn(async () => []),
+      };
+      const { adapter } = mountAdapter(rpc as unknown as ReturnType<typeof rosterRpc>);
+
+      await adapter.applyAddUserConfigPatch(aliceSnapshot, { _coachPersonalToken: "pat-1" });
+
+      expect(rpc.degradedSecretsStatus).not.toHaveBeenCalled();
+      expect(rpc.secretsReload).toHaveBeenCalledOnce();
     });
 
     it("reloads when the Mattermost account secrets file changed", async () => {
