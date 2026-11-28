@@ -22,7 +22,7 @@
     "@octogee/core": "file:../core",
     "@octogee/shared": "file:../shared",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.7.3",
+    "express-rate-limit": "^8.7.5",
     "google-auth-library": "^11.0.2",
     "tsx": "^4.23.15",
     "undici": "8.12.4"
