@@ -113,15 +113,12 @@ async function isFreshNativeLayout(stateDir: string): Promise<boolean> {
   return true;
 }
 
-function disklessClusterRuntime(env: NodeJS.ProcessEnv): boolean {
-  return env.GATEWAY_RUNTIME_KIND === "cluster" && env.GATEWAY_EPHEMERAL_HOME === "true";
-}
-
 function supportedFreshRuntime(env: NodeJS.ProcessEnv): boolean {
   if (env.GATEWAY_CLASS !== "isolated" || !env.OPENCLAW_AGENT_STORE_DSN?.trim()) return false;
-  if (env.GATEWAY_RUNTIME_KIND === "gce-vm" || disklessClusterRuntime(env)) return true;
-  return env.GATEWAY_RUNTIME_KIND === "cluster" && Boolean(env.OCTOGEE_CHECKPOINT_SLOT_ID) &&
-    env.OCTOGEE_CHECKPOINT_SLOT_ID === env.GATEWAY_ID;
+  if (env.GATEWAY_RUNTIME_KIND === "gce-vm") return true;
+  if (env.GATEWAY_RUNTIME_KIND !== "cluster") return false;
+  if (env.OCTOGEE_CHECKPOINT_SLOT_ID && env.OCTOGEE_CHECKPOINT_SLOT_ID !== env.GATEWAY_ID) return false;
+  return Boolean(env.GATEWAY_ID?.trim()) || env.GATEWAY_EPHEMERAL_HOME === "true";
 }
 
 async function fileStat(file: string) {
@@ -175,7 +172,7 @@ export async function prepareFreshIsolatedPostgresState(
 ): Promise<boolean> {
   const { stateDir, env, noRecordedAnchors } = options;
   if (!supportedFreshRuntime(env)) return false;
-  const canPrepare = noRecordedAnchors || (disklessClusterRuntime(env) && options.noRecordedHostAnchors === true);
+  const canPrepare = options.noRecordedHostAnchors ?? noRecordedAnchors;
   const pendingPath = path.join(stateDir, ".native-postgres-prepare");
   const stateFile = localStateStorePath(stateDir);
   if (await fs.realpath(stateDir) !== stateDir) return false;

@@ -34,16 +34,20 @@ describe("agent-anchor-restore entrypoint", () => {
     expect(prepareHost).toHaveBeenCalledOnce();
     expect(initializeHost).not.toHaveBeenCalled();
   });
-  it("prepares the diskless host journal without replacing an existing Shared agent store", async () => {
-    const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-anchor-diskless-")));
+  it.each([
+    { label: "diskless cluster", env: { GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_EPHEMERAL_HOME: "true", GATEWAY_ID: "alice-s-diskless" } },
+    { label: "PVC cluster", env: { GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-s-starter" } },
+    { label: "GCE VM", env: { GATEWAY_RUNTIME_KIND: "gce-vm", GATEWAY_ID: "alice-m-vm" } },
+  ])("prepares the $label host journal without replacing an existing Shared agent store", async ({ env: runtimeEnv }) => {
+    const dir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-anchor-fresh-host-")));
     roots.push(dir);
     const initializeHost = vi.fn(async () => { throw new Error("temporary gateway should not start"); });
     const prepareJournal = vi.fn(async () => undefined);
     const verify = vi.fn(async () => undefined);
     const result = await runAgentAnchorRestore({
       env: withUserClaim({
-        GATEWAY_CLASS: "isolated", GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "alice-s-diskless",
-        GATEWAY_EPHEMERAL_HOME: "true", OPENCLAW_STATE_DIR: dir, OPENCLAW_AGENT_STORE_DSN: "postgres://local-test/agents",
+        GATEWAY_CLASS: "isolated", OPENCLAW_STATE_DIR: dir, OPENCLAW_AGENT_STORE_DSN: "postgres://local-test/agents",
+        ...runtimeEnv,
       }, "alice"),
       broker: { readAgentAnchors: async () => ({ anchors: [defaultAgent] }) },
       readConfig: () => ({ agents: { entries: { [defaultAgent.agentId]: {} } } }),
