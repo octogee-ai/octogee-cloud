@@ -1343,3 +1343,66 @@ it("stops a timed-out normal boot before spending its one repair attempt", async
     expect(children[1]!.alive).toBe(true);
   } finally { await supervisor.stop(); }
 });
+
+it("returns starting immediately on non-blocking permitNormal while booting OpenClaw in the background", async () => {
+  const openclawDir = await temporaryOpenClawDir();
+  const children: FakeChild[] = [];
+  let releaseHealth!: () => void;
+  const healthReady = new Promise<void>((resolve) => { releaseHealth = resolve; });
+  let healthy = false;
+  const supervisor = await startSurgeOpenClawSupervisor({
+    openclawDir,
+    podUid: "cluster-pod",
+    socketPath: path.join(os.tmpdir(), `oc-gate-${randomUUID()}.sock`),
+    log: () => {},
+    readinessReleased: async () => false,
+    prepareTarget: async () => {},
+    prepareDatabases: async () => {},
+    spawnOpenClaw: () => { const child = new FakeChild(); children.push(child); return child; },
+    probeHealthz: async () => healthy,
+    healthTimeoutMs: 5_000,
+  });
+  const client = createSurgeOpenClawProcessSupervisorClient(openclawDir, { socketPath: supervisor.socketPath });
+  try {
+    const state = await client.permitNormal({ awaitReady: false });
+    expect(state).toMatchObject({ role: "normal", mode: "permitted", phase: "starting" });
+    await vi.waitFor(() => expect(children).toHaveLength(1));
+    healthy = true;
+    releaseHealth();
+    await healthReady;
+    await vi.waitFor(async () => {
+      await expect(client.status()).resolves.toMatchObject({ role: "normal", mode: "permitted", phase: "running" });
+    });
+  } finally {
+    releaseHealth();
+    await supervisor.stop();
+  }
+});
+
+it("logs and marks held when a background permitNormal boot fails", async () => {
+  const openclawDir = await temporaryOpenClawDir();
+  const log = vi.fn();
+  const supervisor = await startSurgeOpenClawSupervisor({
+    openclawDir,
+    podUid: "cluster-pod",
+    socketPath: path.join(os.tmpdir(), `oc-gate-${randomUUID()}.sock`),
+    log,
+    readinessReleased: async () => false,
+    prepareTarget: async () => {},
+    prepareDatabases: async () => { throw new Error("background db check failed"); },
+    spawnOpenClaw: () => new FakeChild(),
+    probeHealthz: async () => false,
+    healthTimeoutMs: 500,
+  });
+  const client = createSurgeOpenClawProcessSupervisorClient(openclawDir, { socketPath: supervisor.socketPath });
+  try {
+    const state = await client.permitNormal({ awaitReady: false });
+    expect(state).toMatchObject({ role: "normal", mode: "permitted", phase: "starting" });
+    await vi.waitFor(async () => {
+      await expect(client.status()).resolves.toMatchObject({ role: "normal", mode: "held", phase: "held" });
+    });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("background permitted start failed: background db check failed"));
+  } finally {
+    await supervisor.stop();
+  }
+});
