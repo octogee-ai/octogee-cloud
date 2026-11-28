@@ -243,7 +243,22 @@ async function mattermostSession(origin, username, password) {
     if (!response.ok) throw new Error(`Mattermost ${method} ${path.split("?")[0]} returned HTTP ${response.status}`);
     return response.json();
   };
-  return { get: path => call("GET", path), post: (path, body) => call("POST", path, body) };
+  return { token, get: path => call("GET", path), post: (path, body) => call("POST", path, body) };
+}
+
+function platformApiSession(origin, token) {
+  return {
+    post: async (path, body) => {
+      const response = await fetch(`${origin}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`Platform API POST ${path} returned HTTP ${response.status}: ${text.slice(0, 300)}`);
+      return text ? JSON.parse(text) : null;
+    },
+  };
 }
 
 export function kubectlArgs(state) {
@@ -280,6 +295,11 @@ export async function kindDependencies(options) {
         const chat = await portForward(kubectl, "mattermost", 8065);
         forwards.push(chat);
         return mattermostSession(chat.origin, username, password);
+      },
+      platformApi: async token => {
+        const api = await portForward(kubectl, "octogee-api", 3001);
+        forwards.push(api);
+        return platformApiSession(api.origin, token);
       },
     };
   } catch (error) {
