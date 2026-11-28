@@ -89,6 +89,28 @@ RUN /octogee/scripts/node_modules/.bin/esbuild \
       /octogee/scripts/entrypoints/runner-metrics-exporter.ts \
       --bundle --platform=node --format=esm --packages=external \
       --outdir=/octogee/scripts/shared-runners --out-extension:.js=.mjs
+RUN /octogee/scripts/node_modules/.bin/esbuild \
+      /octogee/scripts/entrypoints/shared-maintenance-startup.ts \
+      /octogee/scripts/entrypoints/prestop-flush.ts \
+      /octogee/scripts/entrypoints/user-identity.ts \
+      /octogee/scripts/entrypoints/clean-user-project-placeholders.ts \
+      /octogee/scripts/entrypoints/claim-ephemeral-writer.ts \
+      /octogee/scripts/entrypoints/recover-restarted-gateway-container-locks.ts \
+      /octogee/scripts/entrypoints/system-config-restore.ts \
+      /octogee/scripts/entrypoints/configured-user-bootstrap.ts \
+      /octogee/scripts/entrypoints/isolated-runtime-state-restore.ts \
+      /octogee/scripts/entrypoints/agent-anchor-restore.ts \
+      /octogee/scripts/entrypoints/pre-boot-config.ts \
+      /octogee/scripts/entrypoints/ensure-configured-agent-runtime-dirs.ts \
+      /octogee/scripts/entrypoints/user-claim.ts \
+      /octogee/scripts/entrypoints/github-cli-auth-hydrate.ts \
+      /octogee/scripts/entrypoints/surge-openclaw-supervisor.ts \
+      /octogee/scripts/entrypoints/prepare-openclaw-sqlite-journals.ts \
+      /octogee/scripts/entrypoints/openclaw-boot-sentinel.ts \
+      /octogee/scripts/entrypoints/isolated-toolchain-hydrator.ts \
+      /octogee/scripts/entrypoints/system-config-watch.ts \
+      --bundle --platform=node --format=esm --packages=external \
+      --outdir=/octogee/scripts/bundled-entrypoints --out-extension:.js=.mjs
 
 RUN /octogee/scripts/node_modules/.bin/tsc -p tsconfig.json --noEmit \
     || { echo "Type-check failed — fix errors before deploying" >&2; exit 1; }
@@ -171,6 +193,7 @@ COPY --chown=node:node gateway/workflow-tools.mjs /octogee/gateway/workflow-tool
 COPY --chown=node:node gateway/apply-gateway-class-policy.mjs /octogee/gateway/apply-gateway-class-policy.mjs
 COPY --chown=node:node gateway/quarantine-user-cron-jobs.mjs /octogee/gateway/quarantine-user-cron-jobs.mjs
 COPY --chmod=755 gateway/shared-auxiliary-runner.sh /octogee/gateway/shared-auxiliary-runner.sh
+COPY --chmod=755 gateway/bundled-entrypoint-runner.sh /octogee/gateway/bundled-entrypoint-runner.sh
 COPY gateway/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY gateway/gateway-class-dual-read.sh /usr/local/libexec/gateway-class-dual-read.sh
 COPY gateway/desktop-node.sh /usr/local/bin/octogee-desktop-node

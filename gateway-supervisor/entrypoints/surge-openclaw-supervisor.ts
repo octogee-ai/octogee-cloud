@@ -203,7 +203,7 @@ export async function prepareConfiguredIsolatedTarget(
   env: NodeJS.ProcessEnv = process.env,
   run: typeof waitForSpawn = waitForSpawn,
 ): Promise<void> {
-  const tsx = env.TSX ?? "/octogee/scripts/node_modules/.bin/tsx";
+  const tsx = env.TSX ?? "/octogee/gateway/bundled-entrypoint-runner.sh";
   const policy = env.GATEWAY_CLASS_POLICY_PATH ?? "/octogee/gateway/apply-gateway-class-policy.mjs";
   const userEnv = { ...env, GATEWAY_CLASS: "isolated" };
   await run(tsx, ["/octogee/scripts/entrypoints/pre-boot-config.ts"], { env: userEnv });
