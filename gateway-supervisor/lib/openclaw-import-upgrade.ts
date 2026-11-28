@@ -1,4 +1,5 @@
 import { MIGRATION_IMPORT_DOCTOR_PHASE_TIMEOUT_MS } from "@octogee/shared/types/fleet-controller";
+import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,8 +34,11 @@ async function snapshotBaselineFiles(root: string, current = root, files: Baseli
     if (entry.isDirectory()) {
       await snapshotBaselineFiles(root, full, files);
     } else if (entry.isFile()) {
-      const stat = await fs.lstat(full);
-      files.push({ relativePath, bytes: await fs.readFile(full), mode: stat.mode & 0o777 });
+      await using handle = await fs.open(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const stat = await handle.stat();
+      if (stat.isFile()) {
+        files.push({ relativePath, bytes: await handle.readFile(), mode: stat.mode & 0o777 });
+      }
     }
   }
   return files;
