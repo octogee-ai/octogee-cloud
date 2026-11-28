@@ -112,7 +112,7 @@ it("retains Native-initialized config metadata while replacing the private boots
       return result;
     }
     expect(config.meta).toEqual(meta);
-    expect(config.gateway).toEqual({ mode: "local" });
+    expect(config.gateway).toEqual({ mode: "local", bind: "loopback", port: 18799 });
     expect(config.agents.defaults).toBeUndefined();
     expect(config.agents.entries["octogee-source-doctor-bootstrap"]).toBeUndefined();
     expect(config.database.postgres).toEqual({ connection: { source: "env", provider: "default", id: "OPENCLAW_AGENT_STORE_DSN" }, schemaPrefix: "octogee" });

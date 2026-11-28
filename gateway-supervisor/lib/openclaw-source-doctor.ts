@@ -298,10 +298,12 @@ export async function repairSourceDoctorAgentStores(agentIds: string[], input: P
     const commandOptions = { env: {
       PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8", NO_COLOR: "1",
       HOME: privateRoot, OPENCLAW_STATE_DIR: privateRoot, OPENCLAW_CONFIG_PATH: configPath,
+      OPENCLAW_NO_RESPAWN: "1",
       OPENCLAW_AGENT_STORE_DSN: env.OPENCLAW_AGENT_STORE_DSN,
     } };
+    const isolatedGateway = { mode: "local", bind: "loopback", port: 18799 };
     const bootstrap = "octogee-source-doctor-bootstrap";
-    await fs.writeFile(configPath, JSON.stringify({ gateway: { mode: "local" }, plugins: { enabled: false },
+    await fs.writeFile(configPath, JSON.stringify({ gateway: isolatedGateway, plugins: { enabled: false },
       agents: { ownership: "explicit", entries: { [bootstrap]: { workspace: path.join(privateRoot, "bootstrap-workspace") } } },
       database: { engine: "sqlite" },
     }), { mode: 0o600 });
@@ -325,7 +327,7 @@ export async function repairSourceDoctorAgentStores(agentIds: string[], input: P
       const initializedConfig = JSON.parse(await fs.readFile(configPath, "utf8"));
       await fs.writeFile(configPath, JSON.stringify({
         ...initializedConfig,
-        gateway: { mode: "local" }, plugins: { enabled: false },
+        gateway: isolatedGateway, plugins: { enabled: false },
         agents: { ownership: "explicit", entries },
         database: { engine: "sqlite", families: { agent: { engine: "postgres" } },
           postgres: { connection: { source: "env", provider: "default", id: "OPENCLAW_AGENT_STORE_DSN" }, schemaPrefix: "octogee" } },
