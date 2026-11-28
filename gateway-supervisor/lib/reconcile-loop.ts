@@ -89,6 +89,13 @@ let activeMountWorkers = 0;
 // stale for that slug and must not re-ensure it.
 let mountClock = 0;
 const lastMountCompletedAt = new Map<string, number>();
+export interface EnsureFailure {
+  message: string;
+  at: number;
+  consecutive: number;
+}
+
+const latestEnsureFailures = new Map<string, EnsureFailure>();
 
 export function _resetReconcileInFlightForTests(): void {
   inFlight.clear();
@@ -104,6 +111,11 @@ export function _resetReconcileInFlightForTests(): void {
   activeMountWorkers = 0;
   mountClock = 0;
   lastMountCompletedAt.clear();
+  latestEnsureFailures.clear();
+}
+
+export function latestEnsureFailure(slug: string): EnsureFailure | null {
+  return latestEnsureFailures.get(slug) ?? null;
 }
 
 export function userMountPending(slug: string): boolean {
@@ -197,8 +209,10 @@ function logReconcilePlan(deps: ReconcileLoopDeps, plan: ReconcilePlan): void {
 async function runMountJob({ slug, deps, plan }: MountJob): Promise<void> {
   if (!(await reconciliationAllowed(deps))) return;
   try {
-    if (deps.canEnsureSlug && !(await deps.canEnsureSlug(slug))) return;
-    if (!(deps.shouldEnsureSlug?.(slug) ?? true)) return;
+    if ((deps.canEnsureSlug && !(await deps.canEnsureSlug(slug))) || !(deps.shouldEnsureSlug?.(slug) ?? true)) {
+      latestEnsureFailures.delete(slug);
+      return;
+    }
     const outcome = await deps.ensureSlug(
       slug,
       plan.currentPendingEvictions(),
@@ -206,10 +220,13 @@ async function runMountJob({ slug, deps, plan }: MountJob): Promise<void> {
     );
     mountClock += 1;
     lastMountCompletedAt.set(slug, mountClock);
+    latestEnsureFailures.delete(slug);
     deps.log(`[reconcile] ${deps.gatewayId}: mounted ${slug} (${outcome})`);
     fireSafely(deps, () => deps.onEnsureSuccess?.(slug));
   } catch (err) {
     const message = errMessage(err);
+    const consecutive = (latestEnsureFailures.get(slug)?.consecutive ?? 0) + 1;
+    latestEnsureFailures.set(slug, { message, at: Date.now(), consecutive });
     deps.log(`[reconcile] ${deps.gatewayId}: ⚠ ensure failed for ${slug}: ${message}`);
     fireSafely(deps, () => deps.onEnsureError?.(slug, message, err));
   }
@@ -303,6 +320,7 @@ async function runEvictionQueue(): Promise<void> {
     try {
       const outcome = await deps.unmountSlug(slug, [...pendingEvictions]);
       pendingEvictions.delete(slug);
+      latestEnsureFailures.delete(slug);
       deps.log(`[reconcile] ${deps.gatewayId}: evicted ${slug} (${outcome})`);
     } catch (err) {
       deps.log(`[reconcile] ${deps.gatewayId}: ⚠ evict failed for ${slug}: ${errMessage(err)}`);

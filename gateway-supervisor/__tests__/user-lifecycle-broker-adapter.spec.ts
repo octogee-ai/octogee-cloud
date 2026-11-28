@@ -48,6 +48,7 @@ import { gatewayScopedJobId, signFleetRequest } from "../lib/fleet-signature.js"
 import { FLEET_KEY_PAIR } from "./fixtures/fleet-keys.js";
 import type { Request, Response as ExpressResponse } from "express";
 import { disableSystemConfigWatch, isSystemConfigWatchDisabled } from "../lib/system-config-watch-state.js";
+import { _resetReconcileInFlightForTests, reconcileFleet } from "../lib/reconcile-loop.js";
 
 describe("migration manifest export runtime wait", () => {
   afterEach(() => vi.useRealTimers());
@@ -73,6 +74,66 @@ describe("migration manifest export runtime wait", () => {
     } finally {
       controller.abort();
       await exported.catch(() => undefined);
+      await fs.rm(fingerprintPath, { force: true });
+    }
+  });
+
+  it("keeps waiting through a single mount failure the next mount recovers from", async () => {
+    const snapshot = aliceSnapshot();
+    const fingerprintPath = path.join(testRuntime.dir, "applied-fingerprints.json");
+    saveAppliedFingerprints(fingerprintPath, new Map());
+    const manifest = { slug: "alice", appliedFingerprint: snapshotConfigFingerprint(snapshot) };
+    secretMocks.exportActivationManifestWithSecret.mockClear();
+    secretMocks.exportActivationManifestWithSecret.mockResolvedValueOnce(manifest);
+    const log = vi.fn();
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({
+      uidForSlug: vi.fn(async () => snapshot.uid),
+      userSnapshot: vi.fn(async () => snapshot),
+    }), rpc: mkGatewayRpc(), log });
+    let fail = true;
+    const reconcile = { gatewayId: "shared-a", getMountObserved: () => [], getEvictObserved: () => [], readDesired: async () => ["alice"],
+      ensureSlug: async () => {
+        if (fail) throw new Error("config.patch timed out");
+        return "mounted" as const;
+      }, unmountSlug: async () => "noop" as const, log: vi.fn() };
+    const exported = adapter.exportOpenClawActivationManifest!("alice", { convergeSource: true, timeoutMs: 10_000 }).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining("waiting for source runtime")));
+      await reconcileFleet(reconcile);
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      fail = false;
+      await reconcileFleet(reconcile);
+      saveAppliedFingerprints(fingerprintPath, new Map([["alice", snapshotConfigFingerprint(snapshot)]]));
+      await expect(exported).resolves.toEqual(manifest);
+    } finally {
+      _resetReconcileInFlightForTests();
+      await exported;
+      await fs.rm(fingerprintPath, { force: true });
+    }
+  });
+
+  it("refuses unconverged source export with the user's mount failure once mount failures repeat during the wait", async () => {
+    const fingerprintPath = path.join(testRuntime.dir, "applied-fingerprints.json");
+    saveAppliedFingerprints(fingerprintPath, new Map());
+    secretMocks.exportActivationManifestWithSecret.mockClear();
+    const log = vi.fn();
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({
+      uidForSlug: vi.fn(async () => "uid-alice"),
+      userSnapshot: vi.fn(async () => aliceSnapshot()),
+    }), rpc: mkGatewayRpc(), log });
+    const failure = "[add:alice] agents.create failed for octogee-alice-proj-tide-coach (WorkspaceVanishedError)";
+    const reconcile = { gatewayId: "shared-a", getMountObserved: () => [], getEvictObserved: () => [], readDesired: async () => ["alice"],
+      ensureSlug: async () => { throw new Error(failure); }, unmountSlug: async () => "noop" as const, log: vi.fn() };
+    await reconcileFleet(reconcile);
+    const exported = adapter.exportOpenClawActivationManifest!("alice", { convergeSource: true, timeoutMs: 10_000 }).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining("waiting for source runtime")));
+      await reconcileFleet(reconcile);
+      await expect(exported).resolves.toMatchObject({ message: `Source runtime configuration cannot converge for alice: ${failure}` });
+      expect(secretMocks.exportActivationManifestWithSecret).not.toHaveBeenCalled();
+    } finally {
+      _resetReconcileInFlightForTests();
+      await exported;
       await fs.rm(fingerprintPath, { force: true });
     }
   });

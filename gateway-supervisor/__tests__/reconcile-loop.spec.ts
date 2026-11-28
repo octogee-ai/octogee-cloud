@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
+  latestEnsureFailure,
   userAttachPending,
   userMountPending,
   reconcileFleet,
@@ -119,6 +120,55 @@ describe("reconcileFleet — bidirectional desired−observed convergence", () =
 
     expect(d.ensured).toEqual(["august", "august"]);
     expect(d.evicted).toEqual([]);
+  });
+
+  it("keeps a user's latest ensure failure until an ensure for that user succeeds", async () => {
+    let fail = true;
+    const d = mkDeps({
+      readDesired: async () => ["august"],
+      ensureSlug: async () => {
+        if (fail) throw new Error("agents.create failed for octogee-august-proj-roamly-coach (WorkspaceVanishedError)");
+        return "mounted";
+      },
+    });
+
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toMatchObject({ message: "agents.create failed for octogee-august-proj-roamly-coach (WorkspaceVanishedError)" });
+    expect(latestEnsureFailure("bea")).toBeNull();
+
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toMatchObject({ consecutive: 2 });
+
+    fail = false;
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toBeNull();
+  });
+
+  it("drops a user's ensure failure when the ensure is skipped or the user is evicted", async () => {
+    let desired = ["august"];
+    let ensurable = true;
+    let observed: string[] = [];
+    const d = mkDeps({
+      readDesired: async () => desired,
+      getEvictObserved: () => observed,
+      canEnsureSlug: async () => ensurable,
+      ensureSlug: async () => { throw new Error("config.patch timed out"); },
+    });
+
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).not.toBeNull();
+    ensurable = false;
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toBeNull();
+
+    ensurable = true;
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).not.toBeNull();
+    desired = [];
+    observed = ["august"];
+    await reconcileFleet(d);
+    await vi.waitFor(() => expect(d.evicted).toEqual(["august"]));
+    expect(latestEnsureFailure("august")).toBeNull();
   });
 
   it("admits the assigned roster before detached stale-state cleanup completes", async () => {

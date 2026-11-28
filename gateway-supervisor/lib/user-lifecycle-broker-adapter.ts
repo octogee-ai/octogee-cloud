@@ -13,6 +13,7 @@ import { sharedMigrationAgentIds, sharedMigrationExportPaths } from "./source-tr
 import { migrateUserScheduler, setUserChannelsRunning } from "./user-channel-quiesce.js";
 import { quiesceUserSessionsBounded, sessionStoreForPath } from "./user-session-quiesce.js";
 import { userFileStatePaths, removeDepartedUserFileState } from "./user-file-state.js";
+import { latestEnsureFailure } from "./reconcile-loop.js";
 import { openClawRuntimeUpdateGuard } from "./openclaw-runtime-update-guard.js";
 import {
   userOwnerCommandsPatch,
@@ -300,12 +301,18 @@ interface BrokerCtx {
 
 async function exportSourceActivationManifest(ctx: BrokerCtx, slug: string,
   options: { signal?: AbortSignal; timeoutMs?: number; convergeSource?: boolean } = {}): Promise<MigrationActivationManifest> {
-  const deadline = Date.now() + (options.timeoutMs ?? 60_000);
+  const startedAt = Date.now();
+  const deadline = startedAt + (options.timeoutMs ?? 60_000);
   let waiting = false;
   while (true) {
     options.signal?.throwIfAborted();
+    const failure = latestEnsureFailure(slug);
+    if (waiting && failure && failure.at >= startedAt && failure.consecutive >= 2) throw new Error(`Source runtime configuration cannot converge for ${slug}: ${failure.message}`);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`Timed out waiting for source runtime configuration to converge for ${slug}`);
+    if (remaining <= 0) {
+      const lastFailure = failure && failure.at >= startedAt ? ": " + failure.message : "";
+      throw new Error(`Timed out waiting for source runtime configuration to converge for ${slug}${lastFailure}`);
+    }
     const manifest = await openClawRuntimeUpdateGuard.run(async () => {
       if (options.convergeSource && !ctx.isIsolatedGateway()) {
         const uid = await ctx.client.uidForSlug(slug);
