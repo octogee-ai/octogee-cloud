@@ -307,9 +307,12 @@ async function exportSourceActivationManifest(ctx: BrokerCtx, slug: string,
   while (true) {
     options.signal?.throwIfAborted();
     const failure = latestEnsureFailure(slug);
-    if (waiting && failure && failure.at >= startedAt) throw new Error(`Source runtime configuration cannot converge for ${slug}: ${failure.message}`);
+    if (waiting && failure && failure.at >= startedAt && failure.consecutive >= 2) throw new Error(`Source runtime configuration cannot converge for ${slug}: ${failure.message}`);
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(`Timed out waiting for source runtime configuration to converge for ${slug}`);
+    if (remaining <= 0) {
+      const lastFailure = failure && failure.at >= startedAt ? ": " + failure.message : "";
+      throw new Error(`Timed out waiting for source runtime configuration to converge for ${slug}${lastFailure}`);
+    }
     const manifest = await openClawRuntimeUpdateGuard.run(async () => {
       if (options.convergeSource && !ctx.isIsolatedGateway()) {
         const uid = await ctx.client.uidForSlug(slug);

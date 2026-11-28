@@ -136,8 +136,38 @@ describe("reconcileFleet — bidirectional desired−observed convergence", () =
     expect(latestEnsureFailure("august")).toMatchObject({ message: "agents.create failed for octogee-august-proj-roamly-coach (WorkspaceVanishedError)" });
     expect(latestEnsureFailure("bea")).toBeNull();
 
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toMatchObject({ consecutive: 2 });
+
     fail = false;
     await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toBeNull();
+  });
+
+  it("drops a user's ensure failure when the ensure is skipped or the user is evicted", async () => {
+    let desired = ["august"];
+    let ensurable = true;
+    let observed: string[] = [];
+    const d = mkDeps({
+      readDesired: async () => desired,
+      getEvictObserved: () => observed,
+      canEnsureSlug: async () => ensurable,
+      ensureSlug: async () => { throw new Error("config.patch timed out"); },
+    });
+
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).not.toBeNull();
+    ensurable = false;
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toBeNull();
+
+    ensurable = true;
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).not.toBeNull();
+    desired = [];
+    observed = ["august"];
+    await reconcileFleet(d);
+    await vi.waitFor(() => expect(d.evicted).toEqual(["august"]));
     expect(latestEnsureFailure("august")).toBeNull();
   });
 

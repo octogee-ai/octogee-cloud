@@ -78,7 +78,41 @@ describe("migration manifest export runtime wait", () => {
     }
   });
 
-  it("refuses unconverged source export with the user's mount failure once a mount fails during the wait", async () => {
+  it("keeps waiting through a single mount failure the next mount recovers from", async () => {
+    const snapshot = aliceSnapshot();
+    const fingerprintPath = path.join(testRuntime.dir, "applied-fingerprints.json");
+    saveAppliedFingerprints(fingerprintPath, new Map());
+    const manifest = { slug: "alice", appliedFingerprint: snapshotConfigFingerprint(snapshot) };
+    secretMocks.exportActivationManifestWithSecret.mockClear();
+    secretMocks.exportActivationManifestWithSecret.mockResolvedValueOnce(manifest);
+    const log = vi.fn();
+    const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({
+      uidForSlug: vi.fn(async () => snapshot.uid),
+      userSnapshot: vi.fn(async () => snapshot),
+    }), rpc: mkGatewayRpc(), log });
+    let fail = true;
+    const reconcile = { gatewayId: "shared-a", getMountObserved: () => [], getEvictObserved: () => [], readDesired: async () => ["alice"],
+      ensureSlug: async () => {
+        if (fail) throw new Error("config.patch timed out");
+        return "mounted" as const;
+      }, unmountSlug: async () => "noop" as const, log: vi.fn() };
+    const exported = adapter.exportOpenClawActivationManifest!("alice", { convergeSource: true, timeoutMs: 10_000 }).catch((error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining("waiting for source runtime")));
+      await reconcileFleet(reconcile);
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      fail = false;
+      await reconcileFleet(reconcile);
+      saveAppliedFingerprints(fingerprintPath, new Map([["alice", snapshotConfigFingerprint(snapshot)]]));
+      await expect(exported).resolves.toEqual(manifest);
+    } finally {
+      _resetReconcileInFlightForTests();
+      await exported;
+      await fs.rm(fingerprintPath, { force: true });
+    }
+  });
+
+  it("refuses unconverged source export with the user's mount failure once mount failures repeat during the wait", async () => {
     const fingerprintPath = path.join(testRuntime.dir, "applied-fingerprints.json");
     saveAppliedFingerprints(fingerprintPath, new Map());
     secretMocks.exportActivationManifestWithSecret.mockClear();
