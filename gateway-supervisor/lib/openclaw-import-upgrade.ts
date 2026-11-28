@@ -8,8 +8,45 @@ import { installedAgentSchemaVersion, postgresSourceMetadataMatches } from "./op
 import { runOpenClaw, type OpenClawCommand } from "./openclaw-cli.js";
 import { readOpenClawFileSnapshot, readPostgresAnchorSnapshot, sameOpenClawFileSnapshot } from "./openclaw-file-snapshot.js";
 
+interface BaselineFileEntry {
+  relativePath: string;
+  bytes: Buffer;
+  mode: number;
+}
+
+interface CachedBaseline {
+  initialized: Record<string, unknown>;
+  files: readonly BaselineFileEntry[];
+}
+
 const descriptorCache = new WeakMap<OpenClawCommand, Promise<number>>();
+const baselineCache = new WeakMap<OpenClawCommand, CachedBaseline>();
 const METADATA_BATCH_SIZE = 4;
+const ISOLATED_UPGRADE_GATEWAY = { mode: "local", bind: "loopback", port: 18799 } as const;
+
+async function snapshotBaselineFiles(root: string, current = root, files: BaselineFileEntry[] = []): Promise<BaselineFileEntry[]> {
+  const entries = await fs.readdir(current, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(current, entry.name);
+    const relativePath = path.relative(root, full);
+    if (relativePath === "agents" || relativePath === "openclaw.json") continue;
+    if (entry.isDirectory()) {
+      await snapshotBaselineFiles(root, full, files);
+    } else if (entry.isFile()) {
+      const stat = await fs.lstat(full);
+      files.push({ relativePath, bytes: await fs.readFile(full), mode: stat.mode & 0o777 });
+    }
+  }
+  return files;
+}
+
+async function restoreBaselineFiles(root: string, files: readonly BaselineFileEntry[]): Promise<void> {
+  for (const file of files) {
+    const target = path.join(root, file.relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+    await fs.writeFile(target, file.bytes, { mode: file.mode || 0o600, flag: "wx" });
+  }
+}
 
 async function cachedDevelopmentProbe(root: string, agentId: string, run: OpenClawCommand, env: NodeJS.ProcessEnv, assertCurrent: () => Promise<void>): Promise<number> {
   await assertCurrent();
@@ -127,11 +164,8 @@ export async function upgradeImportedAgentStores(input: {
     }
     input.log("[import-upgrade] upgrade=required schemas=older");
     const options = { env: { PATH: env.PATH ?? "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8", NO_COLOR: "1", HOME: root,
-      OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: configPath, OPENCLAW_AGENT_STORE_DSN: env.OPENCLAW_AGENT_STORE_DSN },
+      OPENCLAW_STATE_DIR: root, OPENCLAW_CONFIG_PATH: configPath, OPENCLAW_NO_RESPAWN: "1", OPENCLAW_AGENT_STORE_DSN: env.OPENCLAW_AGENT_STORE_DSN },
       signal: input.signal, timeoutMs: MIGRATION_IMPORT_DOCTOR_PHASE_TIMEOUT_MS };
-    await fs.writeFile(configPath, JSON.stringify({ gateway: { mode: "local" }, plugins: { enabled: false },
-      agents: { ownership: "explicit", entries: { "octogee-import-upgrade-bootstrap": { workspace: path.join(root, "bootstrap-workspace") } } },
-      database: { engine: "sqlite" } }), { mode: 0o600 });
     const runPrivate = async (args: string[], phase: string) => {
       await assertCurrent();
       let result;
@@ -139,9 +173,25 @@ export async function upgradeImportedAgentStores(input: {
       finally { await assertCurrent(); }
       if (result.code !== 0) throw new Error(`import ${phase} failed (exit ${result.code})`);
     };
-    await phase("bootstrap", () => runPrivate(["setup", "--baseline", "--skip-bootstrap", "--json"], "bootstrap setup"));
-    const initialized = JSON.parse(await fs.readFile(configPath, "utf8"));
-    await fs.rm(path.join(root, "agents"), { recursive: true, force: true });
+    const cachedBaseline = baselineCache.get(run);
+    let initialized: Record<string, unknown>;
+    if (cachedBaseline) {
+      await phase("bootstrap", async () => {
+        await assertCurrent();
+        await restoreBaselineFiles(root, cachedBaseline.files);
+        await assertCurrent();
+      });
+      initialized = cachedBaseline.initialized;
+    } else {
+      await fs.writeFile(configPath, JSON.stringify({ gateway: ISOLATED_UPGRADE_GATEWAY, plugins: { enabled: false },
+        agents: { ownership: "explicit", entries: { "octogee-import-upgrade-bootstrap": { workspace: path.join(root, "bootstrap-workspace") } } },
+        database: { engine: "sqlite" } }), { mode: 0o600 });
+      await phase("bootstrap", () => runPrivate(["setup", "--baseline", "--skip-bootstrap", "--json"], "bootstrap setup"));
+      initialized = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+      await fs.rm(path.join(root, "agents"), { recursive: true, force: true });
+      const files = await snapshotBaselineFiles(root);
+      baselineCache.set(run, { initialized, files });
+    }
     const entries: Record<string, { workspace: string }> = {};
     for (const store of captured) {
       const file = path.join(root, "agents", store.agentId, "agent", "openclaw-agent.sqlite");
@@ -149,7 +199,7 @@ export async function upgradeImportedAgentStores(input: {
       await fs.writeFile(file, store.snapshot.bytes, { mode: 0o600, flag: "wx" });
       entries[store.agentId] = { workspace: path.join(root, "workspaces", store.agentId) };
     }
-    await fs.writeFile(configPath, JSON.stringify({ ...initialized, gateway: { mode: "local" }, plugins: { enabled: false },
+    await fs.writeFile(configPath, JSON.stringify({ ...initialized, gateway: ISOLATED_UPGRADE_GATEWAY, plugins: { enabled: false },
       agents: { ownership: "explicit", entries }, database: { engine: "sqlite", families: { agent: { engine: "postgres" } },
         postgres: { connection: { source: "env", provider: "default", id: "OPENCLAW_AGENT_STORE_DSN" }, schemaPrefix: "octogee" } } }), { mode: 0o600 });
     await assertCurrent();
