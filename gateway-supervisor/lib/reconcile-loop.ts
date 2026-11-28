@@ -89,6 +89,7 @@ let activeMountWorkers = 0;
 // stale for that slug and must not re-ensure it.
 let mountClock = 0;
 const lastMountCompletedAt = new Map<string, number>();
+const latestEnsureFailures = new Map<string, { message: string; at: number }>();
 
 export function _resetReconcileInFlightForTests(): void {
   inFlight.clear();
@@ -104,6 +105,11 @@ export function _resetReconcileInFlightForTests(): void {
   activeMountWorkers = 0;
   mountClock = 0;
   lastMountCompletedAt.clear();
+  latestEnsureFailures.clear();
+}
+
+export function latestEnsureFailure(slug: string): { message: string; at: number } | null {
+  return latestEnsureFailures.get(slug) ?? null;
 }
 
 export function userMountPending(slug: string): boolean {
@@ -206,10 +212,12 @@ async function runMountJob({ slug, deps, plan }: MountJob): Promise<void> {
     );
     mountClock += 1;
     lastMountCompletedAt.set(slug, mountClock);
+    latestEnsureFailures.delete(slug);
     deps.log(`[reconcile] ${deps.gatewayId}: mounted ${slug} (${outcome})`);
     fireSafely(deps, () => deps.onEnsureSuccess?.(slug));
   } catch (err) {
     const message = errMessage(err);
+    latestEnsureFailures.set(slug, { message, at: Date.now() });
     deps.log(`[reconcile] ${deps.gatewayId}: ⚠ ensure failed for ${slug}: ${message}`);
     fireSafely(deps, () => deps.onEnsureError?.(slug, message, err));
   }

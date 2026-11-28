@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
+  latestEnsureFailure,
   userAttachPending,
   userMountPending,
   reconcileFleet,
@@ -119,6 +120,25 @@ describe("reconcileFleet — bidirectional desired−observed convergence", () =
 
     expect(d.ensured).toEqual(["august", "august"]);
     expect(d.evicted).toEqual([]);
+  });
+
+  it("keeps a user's latest ensure failure until an ensure for that user succeeds", async () => {
+    let fail = true;
+    const d = mkDeps({
+      readDesired: async () => ["august"],
+      ensureSlug: async () => {
+        if (fail) throw new Error("agents.create failed for octogee-august-proj-roamly-coach (WorkspaceVanishedError)");
+        return "mounted";
+      },
+    });
+
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toMatchObject({ message: "agents.create failed for octogee-august-proj-roamly-coach (WorkspaceVanishedError)" });
+    expect(latestEnsureFailure("bea")).toBeNull();
+
+    fail = false;
+    await reconcileFleet(d);
+    expect(latestEnsureFailure("august")).toBeNull();
   });
 
   it("admits the assigned roster before detached stale-state cleanup completes", async () => {
