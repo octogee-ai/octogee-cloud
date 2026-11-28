@@ -24,7 +24,8 @@ export interface NativeReturnRecoveryIntent {
   sourceEpoch: number;
   failedAt: number;
   schedulerMigrationId: string;
-  sourceVm: { instanceName: string; instanceId: string; zone: string };
+  sourceVm?: { instanceName: string; instanceId: string; zone: string };
+  sourcePod?: true;
   targetRetirement: { operationId: string; version: number; createdAt: number; completedAt: number };
   completedAt?: number;
 }
@@ -108,8 +109,15 @@ function assignmentMatches(assignment: GatewayAssignment | null, scope: Recovery
     Number.isSafeInteger(assignment.epoch), assignment.epoch > 0,
     assignment.state === "serving" || assignment.state === "quiescing" && assignment.updatedByOperationId === operationId].every(Boolean);
 }
-function sourceVmIdentity(runtime: FleetRegistryRecord | null, sourceId: string, operationId: string): NativeReturnRecoveryIntent["sourceVm"] | null {
-  if (runtime === null) return null;
+type SourceRuntimeIdentity = Pick<NativeReturnRecoveryIntent, "sourceVm" | "sourcePod">;
+
+function sourceRuntimeIdentity(runtime: FleetRegistryRecord | null, sourceId: string, operationId: string): SourceRuntimeIdentity | null {
+  if (runtime === null || runtime.gatewayId !== sourceId) return null;
+  if (runtime.runtime === "cluster") return runtime.vm == null && runtime.vmHome == null ? { sourcePod: true } : null;
+  const sourceVm = sourceVmIdentity(runtime, sourceId, operationId);
+  return sourceVm ? { sourceVm } : null;
+}
+function sourceVmIdentity(runtime: FleetRegistryRecord, sourceId: string, operationId: string): NativeReturnRecoveryIntent["sourceVm"] | null {
   const home = runtime.vmHome ?? {};
   const instanceName = runtime.vm?.instanceName, instanceId = runtime.vm?.instanceId, zone = runtime.vm?.zone;
   const custody = [runtime.gatewayId === sourceId, runtime.runtime === "gce-vm",
@@ -184,15 +192,15 @@ async function readAuthority(tx: PlatformStateTransaction, uid: string, operatio
     tx.journal.operations.get(retirementId), tx.journal.operations.listByStatus(["pending", "running"]),
   ]);
   requireState(sourceLeaseMatches(user, source, scope, operationId), "native return recovery source lease changed");
-  const sourceVm = sourceVmIdentity(runtime, sourceId, operationId);
-  requireState(assignmentMatches(assignment, scope, operationId) && targetAssignment === null && sourceVm !== null && handoffMatches(operation, scope),
+  const sourceRuntime = sourceRuntimeIdentity(runtime, sourceId, operationId);
+  requireState(assignmentMatches(assignment, scope, operationId) && targetAssignment === null && sourceRuntime !== null && handoffMatches(operation, scope),
     "native return recovery assignment or scheduler custody changed");
   requireState(!active.some(candidate => candidate.id !== operationId && competingOperation(candidate, uid, sourceId, targetId)), "native return recovery has competing work");
   requireState(retirementMatches(targetRoot, retirement, targetId, failedAt), "native return target retirement is incomplete");
   const lease = user!.activationLease!, handoff = operation.schedulerHandoff!, retired = retirement!;
   const intent: NativeReturnRecoveryIntent = { leaseId: lease.leaseId, generation: lease.generation, sourceEpoch: assignment.epoch, failedAt,
     schedulerMigrationId: handoff.migrationId,
-    sourceVm,
+    ...sourceRuntime!,
     targetRetirement: { operationId: retirementId, version: retired.input.retirementClaimVersion as number, createdAt: retired.createdAt, completedAt: retired.completedAt as number } };
   assertCapturedIntent(prior, intent, claimedStartedAt);
   return { ...scope, operation, prior, intent, assignment };
@@ -244,7 +252,7 @@ export function createNativeReturnSourceRecoveryOwner(deps: RecoveryDeps) {
         await assertRetired(); await work(); await assertRetired(); await ctx.reportStep({ name, status: "done", completedAt: deps.now() });
       };
       const nativeInput = { fromGatewayId: captured.sourceId, toGatewayId: captured.targetId, uid, slug: captured.slug, operationId: op.id, claimedStartedAt: claim };
-      await step("recover-native-source-hold", () => deps.releaseSourceHold(nativeInput));
+      if (captured.intent.sourceVm) await step("recover-native-source-hold", () => deps.releaseSourceHold(nativeInput));
       await step("recover-native-source-ownership", () => deps.prepareSourceStores(captured.sourceId, captured.slug, { expectedUserUid: uid, assertCurrent: assertSourceCurrent }));
       const client = await deps.sourceClient(captured.sourceId, { expectedUserUid: uid, assertCurrent: assertSourceCurrent });
       await step("recover-native-source-scheduler", () => client.scheduler({ gatewayId: captured.sourceId, migrationId: captured.intent.schedulerMigrationId, slug: captured.slug, phase: "resume" }));
