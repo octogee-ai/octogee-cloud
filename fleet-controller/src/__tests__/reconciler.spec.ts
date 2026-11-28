@@ -9,6 +9,7 @@ import {
   requestGatewayRecheck,
   serializeGatewayConvergence,
   startReconciler,
+  GATEWAY_RECHECK_MS,
 } from "../index";
 import { acknowledgeUserRestore, beginUserRestore, type FleetStateDeps } from "@octogee/core/fleet-state";
 import {
@@ -1995,7 +1996,7 @@ describe("startReconciler — targeted gateways ahead of a queued full reconcile
 
     requestGatewayRecheck("default");
     requestGatewayRecheck("default");
-    await vi.advanceTimersByTimeAsync(14_000);
+    await vi.advanceTimersByTimeAsync(GATEWAY_RECHECK_MS - 1_000);
     const beforeDelay = events.filter((event) => event.startsWith("converge:"));
     await vi.advanceTimersByTimeAsync(2_000);
     stop();
