@@ -69,7 +69,7 @@ async function runClaimed(h: ReturnType<typeof owner>) {
   const claimed = (await h.store.journal.operations.get(operationId))!;
   const steps: unknown[] = [];
   const ctx = { assertActiveClaim: vi.fn(async () => undefined), reportStep: vi.fn(async (step: unknown) => { steps.push(step); }) };
-  const result = await h.recovery.recover({ id: operationId, ...claimed } as unknown as Operation, ctx as unknown as OperationContext);
+  const result = await h.recovery.recover({ ...claimed, id: operationId } as unknown as Operation, ctx as unknown as OperationContext);
   return { result, steps: ctx.reportStep.mock.calls.map(([step]) => step as { name: string; status: string }) };
 }
 
