@@ -637,6 +637,14 @@ function privateProjectAgentForImport(agent, keyed, cwd) {
         delete entry.cwd;
     return entry;
 }
+function accountsSecretContractChanged(currentAccounts, staleAccounts, nextAccounts) {
+    if (Object.keys(staleAccounts).length > 0)
+        return true;
+    return Object.entries(nextAccounts).some(([accountId, account]) => {
+        const existing = currentAccounts[accountId];
+        return !isRecord(existing) || !isDeepStrictEqual(existing.botToken, account.botToken);
+    });
+}
 export async function applyOpenClawActivationManifest(manifest, opts) {
     const privateProjects = privateProjectWorkspaceAgentIds(manifest);
     const authInheritanceAnchor = opts.authInheritanceAnchor;
@@ -700,11 +708,7 @@ export async function applyOpenClawActivationManifest(manifest, opts) {
             const rosterPatch = userAgentRosterPatch(current, manifest.slug, rebindPlatformEmbeddingRefs(orderedAgents));
             const staleAccounts = staleProjectAgentAccountNulls(current, manifest.slug, activationAgents.map((entry) => entry.accountId));
             const nextAccounts = mattermostAccountEndpointsForTarget(current, Object.fromEntries(activationAgents.map((entry) => [entry.accountId, entry.mattermostAccount])), opts.gatewayClass !== "isolated");
-            secretContractChanged = Object.keys(staleAccounts).length > 0 ||
-                Object.entries(nextAccounts).some(([accountId, account]) => {
-                    const existing = currentAccounts[accountId];
-                    return !isRecord(existing) || !isDeepStrictEqual(existing.botToken, account.botToken);
-                });
+            secretContractChanged = accountsSecretContractChanged(currentAccounts, staleAccounts, nextAccounts);
             return {
                 ...ownerCommandsSection(opts.ownerCommandsPatch, current),
                 // openclaw rejects a multi-agent roster that declares no ownership.

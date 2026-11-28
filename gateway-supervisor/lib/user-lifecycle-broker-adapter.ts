@@ -1007,6 +1007,18 @@ interface HotReloadSecretCheck {
   configReloadedSecrets: boolean;
 }
 
+function degradedAuthStoreAgentId(ownerId: string): string | null {
+  try {
+    const tuple = JSON.parse(ownerId);
+    if (!Array.isArray(tuple) || tuple.length !== 2 || typeof tuple[0] !== "string") return null;
+    const relative = path.relative(AGENTS_DIR, tuple[0]);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    return relative.split(path.sep)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 function degradedOwnerBelongsToOtherUser(
   owner: DegradedSecretOwner,
   slug: string,
@@ -1018,19 +1030,8 @@ function degradedOwnerBelongsToOtherUser(
       const accountId = owner.ownerId.slice("mattermost:".length);
       return !accountIds.has(accountId) && accountId !== `${slug}-coach` && !accountId.startsWith(`${slug}-proj-`);
     }
-    try {
-      const tuple = JSON.parse(owner.ownerId);
-      if (Array.isArray(tuple) && tuple.length === 2 && typeof tuple[0] === "string") {
-        const relative = path.relative(AGENTS_DIR, tuple[0]);
-        const ownerAgentId = relative.split(path.sep)[0];
-        if (ownerAgentId && ownerAgentId !== ".." && !relative.startsWith("..") && !path.isAbsolute(relative)) {
-          return !agentIds.has(ownerAgentId) && !agentIdBelongsToSlug(ownerAgentId, slug);
-        }
-      }
-    } catch {
-      return false;
-    }
-    return false;
+    const ownerAgentId = degradedAuthStoreAgentId(owner.ownerId);
+    return ownerAgentId !== null && !agentIds.has(ownerAgentId) && !agentIdBelongsToSlug(ownerAgentId, slug);
   }
   if (owner.ownerKind === "capability" && owner.ownerId.startsWith("memory-provider:")) {
     const ownerAgentId = owner.ownerId.slice("memory-provider:".length);
@@ -2526,12 +2527,8 @@ async function activateImportedUser(
     patch,
     secretMaterial,
     signal: opts.signal,
-    hotReloadSecretCheck: {
-      slug,
-      agentIds: activationManifestAgentIds(safeManifest),
-      accountIds,
-      configReloadedSecrets: patch.configNoop !== true && patch.secretContractChanged === true,
-    },
+    agentIds: activationManifestAgentIds(safeManifest),
+    accountIds,
     configuredUserRouting: configuredBuilder
       ? { accountIds, baseline: routingActivationBaseline }
       : undefined,
@@ -2555,19 +2552,25 @@ async function settleActivatedImport(
     };
     secretMaterial: SecretMaterialLedger;
     signal?: AbortSignal;
-    hotReloadSecretCheck?: HotReloadSecretCheck;
+    agentIds: readonly string[];
+    accountIds: readonly string[];
     configuredUserRouting?: {
       accountIds: readonly string[];
       baseline: Readonly<Record<string, number>>;
     };
   },
 ): Promise<string | undefined> {
-  const { slug, patch, secretMaterial, signal, hotReloadSecretCheck, configuredUserRouting } = input;
+  const { slug, patch, secretMaterial, signal, agentIds, accountIds, configuredUserRouting } = input;
   try {
     const revisionWaitStartedAt = Date.now();
     await waitForAppliedConfigRevision(ctx.rpc, slug, { signal });
     ctx.log(`[import:${slug}] final config revision confirmed in ${Date.now() - revisionWaitStartedAt}ms`);
-    await reloadRuntimeSecretsIfChanged(ctx, `[import:${slug}]`, secretMaterial, signal, hotReloadSecretCheck);
+    await reloadRuntimeSecretsIfChanged(ctx, `[import:${slug}]`, secretMaterial, signal, {
+      slug,
+      agentIds,
+      accountIds,
+      configReloadedSecrets: patch.configNoop !== true && patch.secretContractChanged === true,
+    });
     if (ctx.pendingRuntimeSecrets.get(slug) === secretMaterial) ctx.pendingRuntimeSecrets.delete(slug);
     if (configuredUserRouting && patch.configNoop === true) {
       await activateMattermostRoutingAfterConfigPatch(

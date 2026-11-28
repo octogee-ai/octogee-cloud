@@ -747,6 +747,18 @@ function privateProjectAgentForImport(agent: Record<string, unknown>, keyed: boo
   return entry;
 }
 
+function accountsSecretContractChanged(
+  currentAccounts: Record<string, unknown>,
+  staleAccounts: Record<string, null>,
+  nextAccounts: Record<string, unknown>,
+): boolean {
+  if (Object.keys(staleAccounts).length > 0) return true;
+  return Object.entries(nextAccounts).some(([accountId, account]) => {
+    const existing = currentAccounts[accountId];
+    return !isRecord(existing) || !isDeepStrictEqual(existing.botToken, (account as Record<string, unknown>).botToken);
+  });
+}
+
 export async function applyOpenClawActivationManifest(
   manifest: MigrationActivationManifest,
   opts: {
@@ -865,11 +877,7 @@ export async function applyOpenClawActivationManifest(
         const nextAccounts = mattermostAccountEndpointsForTarget(current, Object.fromEntries(
           activationAgents.map((entry) => [entry.accountId, entry.mattermostAccount]),
         ), opts.gatewayClass !== "isolated");
-        secretContractChanged = Object.keys(staleAccounts).length > 0 ||
-          Object.entries(nextAccounts).some(([accountId, account]) => {
-            const existing = currentAccounts[accountId];
-            return !isRecord(existing) || !isDeepStrictEqual(existing.botToken, (account as Record<string, unknown>).botToken);
-          });
+        secretContractChanged = accountsSecretContractChanged(currentAccounts, staleAccounts, nextAccounts);
         return {
           ...ownerCommandsSection(opts.ownerCommandsPatch, current),
           // openclaw rejects a multi-agent roster that declares no ownership.
