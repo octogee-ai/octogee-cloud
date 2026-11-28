@@ -42,15 +42,23 @@ const SECRET_PATTERNS = [
 ];
 
 const OPENCLAW_CONFIG = "/home/node/.openclaw/system_config/openclaw.json";
+const SHARED_OPENCLAW_CONFIG = "/home/node/.openclaw/openclaw.json";
 const PROJECT_TIMEOUT_MS = 600_000;
 const PROJECT_AGENT_STORE_SQL = `SELECT gateway_id FROM platform.agent_stores WHERE uid = :'uid' AND agent_id = :'agent';
 `;
 const ARCHIVE_PROJECT_SQL = `UPDATE platform.workspace_projects SET commercial_lifecycle_status = 'archived'
 WHERE owner_uid = :'uid' AND project_slug = :'project';
 `;
+const RESTORE_PROJECT_SQL = `UPDATE platform.workspace_projects SET commercial_lifecycle_status = 'active'
+WHERE owner_uid = :'uid' AND project_slug = :'project';
+`;
 
-export function projectSlug(now) {
-  return `harbor${now.toString(36)}`;
+export function projectSlug(now, name = "harbor") {
+  return `${name}${now.toString(36)}`;
+}
+
+export function projectWorkspaceFile(user, slug, file) {
+  return `/home/node/.openclaw/customers/${user}/projects/${slug}/${file}`;
 }
 
 export function projectAgentId(user, slug) {
@@ -275,17 +283,25 @@ function requireBoundHome(deps, gatewayId) {
   if (phase !== "Bound") throw new Error(`${gatewayId}'s home claim is ${phase ?? "missing"}, not Bound`);
 }
 
-async function giveProject(deps, options, uid) {
+async function giveProject(deps, options, uid, name) {
   const issued = deps.fleet(["user", "issue-passwords", options.user, "--apply"]).response;
   const chat = await deps.signIn(issued.chat.username, issued.chat.password);
   const api = await deps.platformApi(chat.token);
-  const slug = projectSlug(deps.clock.now());
-  await api.post("/api/projects", { name: "Harbor", slug });
+  const slug = projectSlug(deps.clock.now(), name.toLowerCase());
+  await api.post("/api/projects", { name, slug });
   const agentId = projectAgentId(options.user, slug);
   await waitFor(() => deps.sql(PROJECT_AGENT_STORE_SQL, { uid, agent: agentId }).trim() === options.gateway,
     { timeoutMs: PROJECT_TIMEOUT_MS, intervalMs: 10_000, label: `${agentId}'s store to be recorded on ${options.gateway}` }, deps.clock);
   deps.log(`Gave ${options.user} project ${slug}; ${agentId} has a store on ${options.gateway}`);
   return { slug, agentId };
+}
+
+async function waitForRosteredAgents(deps, gatewayId, agentIds) {
+  await waitFor(() => {
+    const config = deps.readGatewayFile(gatewayId, SHARED_OPENCLAW_CONFIG);
+    return config !== null && agentIds.every(agentId => configuresAgent(config, agentId));
+  }, { timeoutMs: PROJECT_TIMEOUT_MS, intervalMs: 10_000, label: `${gatewayId} to roster ${agentIds.join(" and ")}` }, deps.clock);
+  deps.log(`${gatewayId} rostered ${agentIds.join(" and ")}`);
 }
 
 async function waitForDetachedAgent(deps, gatewayId, agentId) {
@@ -300,7 +316,8 @@ export async function run(deps, options) {
   const { log } = deps;
   pinModel(deps, options);
   const user = await placeOnSharedGateway(deps, options);
-  const project = { uid: user.id, ...await giveProject(deps, options, user.id) };
+  const project = { uid: user.id, ...await giveProject(deps, options, user.id, "Harbor") };
+  const active = await giveProject(deps, options, user.id, "Tide");
 
   deps.setSizingProfile(POD_SIZING_PROFILE, POD_PROFILE);
   log(`Set sizing profile ${POD_SIZING_PROFILE} to a pod with a ${POD_PROFILE.computer.homeSizeGiB} GiB home`);
@@ -310,14 +327,37 @@ export async function run(deps, options) {
   if (typeof gatewayId !== "string" || gatewayId === "") throw new Error(`${giving} answered without a gateway id`);
   const operationId = migrationOperationId(given, giving);
   log(`Gave ${options.user} isolated gateway ${gatewayId} in migration ${operationId}`);
+  let roundTrip;
   try {
-    return await serveParkResumeAndRetire(deps, options, gatewayId, operationId, project);
+    roundTrip = await serveParkResumeAndRetire(deps, options, { gatewayId, operationId }, { project, active });
   } catch (error) {
     throw new Error(redactSecrets(`${error.message}\n${gatewayDiagnostics(deps, gatewayId)}`));
   }
+  return { gatewayId, ...roundTrip, ...await restoreOnSharedAndMoveOut(deps, options, project, active) };
 }
 
-async function serveParkResumeAndRetire(deps, options, gatewayId, operationId, project) {
+async function restoreOnSharedAndMoveOut(deps, options, project, active) {
+  const { log } = deps;
+  await waitForRosteredAgents(deps, options.gateway, [active.agentId]);
+  deps.sql(RESTORE_PROJECT_SQL, { uid: project.uid, project: project.slug });
+  log(`Restored ${options.user}'s project ${project.slug} on ${options.gateway}`);
+  await waitForRosteredAgents(deps, options.gateway, [project.agentId, active.agentId]);
+
+  const moving = `user migrate --to-isolated=${POD_SIZING_PROFILE}`;
+  const moved = deps.fleet(["user", "migrate", options.user, `--to-isolated=${POD_SIZING_PROFILE}`, "--apply"]).response;
+  const gatewayId = moved?.gatewayId;
+  if (typeof gatewayId !== "string" || gatewayId === "") throw new Error(`${moving} answered without a gateway id`);
+  try {
+    await waitForMigration(deps, migrationOperationId(moved, moving), gatewayId);
+    await waitForUserMount(deps, options, gatewayId);
+  } catch (error) {
+    throw new Error(redactSecrets(`${error.message}\n${gatewayDiagnostics(deps, gatewayId)}`));
+  }
+  log(`Moved ${options.user} out again to isolated gateway ${gatewayId} after the restore`);
+  return { secondGatewayId: gatewayId };
+}
+
+async function serveParkResumeAndRetire(deps, options, { gatewayId, operationId }, { project, active }) {
   const { log, clock } = deps;
   await waitForWorkspaceIdentities(deps, gatewayId);
   await waitForUserMount(deps, options, gatewayId);
@@ -345,6 +385,8 @@ async function serveParkResumeAndRetire(deps, options, gatewayId, operationId, p
   }
   log(`Resumed ${gatewayId} with its home intact`);
   await waitForDetachedAgent(deps, gatewayId, project.agentId);
+  deps.removeGatewayFile(gatewayId, projectWorkspaceFile(options.user, active.slug, "SOUL.md"));
+  log(`Removed the generated SOUL.md from ${options.user}'s project ${active.slug} on ${gatewayId}`);
 
   const returning = deps.fleet(["user", "migrate", options.user, `--to=${options.gateway}`, "--apply"]).response;
   await waitForMigration(deps, migrationOperationId(returning, `user migrate --to=${options.gateway}`), options.gateway);
@@ -357,7 +399,7 @@ async function serveParkResumeAndRetire(deps, options, gatewayId, operationId, p
   await waitFor(() => deps.gatewayPodCount(gatewayId) === 0 && deps.homeClaimPhase(gatewayId) === null,
     { timeoutMs: 600_000, intervalMs: 5_000, label: `${gatewayId}'s pod and home claim to be deleted after retire` }, clock);
   log(`Returned ${options.user} to ${options.gateway} with archived project agent ${project.agentId} and retired ${gatewayId}; its home claim is gone`);
-  return { gatewayId, ...roundTrip };
+  return roundTrip;
 }
 
 export function isolatedDependencies(base, options) {
@@ -380,6 +422,9 @@ export function isolatedDependencies(base, options) {
     },
     writeGatewayFile: (gatewayId, path, content) => {
       gatewayExec(gatewayId, 'cat > "$1"', [path], content);
+    },
+    removeGatewayFile: (gatewayId, path) => {
+      gatewayExec(gatewayId, 'test -f "$1" && rm "$1"', [path]);
     },
     gatewayLog: gatewayId => command("kubectl", [...kubectl, "logs", deployment(gatewayId), "-c", "gateway", "--tail=5000"]),
     previousGatewayLog: gatewayId => command("kubectl",
@@ -407,8 +452,9 @@ async function main() {
   const base = await kindDependencies(options);
   try {
     const deps = isolatedDependencies(base, options);
-    const { gatewayId } = await run(deps, options);
-    deps.log(`Isolated gateway ${gatewayId} served ${options.user}, kept their home through park and resume, and retired cleanly`);
+    const { gatewayId, secondGatewayId } = await run(deps, options);
+    deps.log(`Isolated gateway ${gatewayId} served ${options.user}, kept their home through park and resume, and retired cleanly; `
+      + `the restored project was rostered on ${options.gateway} and ${options.user} moved out again to ${secondGatewayId}`);
   } finally {
     base.close();
   }

@@ -31,6 +31,8 @@ interface Scenario {
   migrationBack?: Migration;
   projectStoreNeverRecorded?: boolean;
   archivedAgentNeverDetached?: boolean;
+  sharedRefusesRestoredAgent?: boolean;
+  migrationOutAgain?: Migration;
 }
 
 interface Step { name: string; status: string; error?: unknown }
@@ -39,10 +41,15 @@ interface Migration { finishesAfterMs?: number; ends?: { status: string; steps: 
 const SUCCEEDED = { status: "succeeded", steps: [{ name: "import", status: "succeeded" }, { name: "cutover-firestore", status: "succeeded" }] };
 const MIGRATION_TO_ISOLATED = "op-to-isolated";
 const MIGRATION_BACK = "op-back";
+const MIGRATION_OUT_AGAIN = "op-out-again";
+const ISOLATED_AGAIN = "b-lin-2";
 
 const RESUMED_PROCESS_STARTS_MS = 30_000;
 const CONFIG_FILE = "/home/node/.openclaw/system_config/openclaw.json";
 const PROJECT_AGENT = "octogee-lin-proj-harbor0-coach";
+const ACTIVE_AGENT = "octogee-lin-proj-tide0-coach";
+const SHARED_CONFIG_FILE = "/home/node/.openclaw/openclaw.json";
+const ACTIVE_SOUL = "/home/node/.openclaw/customers/lin/projects/tide0/SOUL.md";
 
 function cluster(scenario: Scenario = {}) {
   let now = 0;
@@ -59,9 +66,11 @@ function cluster(scenario: Scenario = {}) {
   const running = () => pods > 0 && now >= runningFrom;
   const home = new Map<string, string>();
   let sent = 0;
-  let projectCreated = false;
+  const projectsCreated = new Set<string>();
   let archived = false;
   let detached = false;
+  let restored = false;
+  let returned = false;
   const operations = new Map<string, { finishesAt: number; ends: NonNullable<Migration["ends"]> }>();
   const startMigration = (id: string, migration: Migration | undefined, defaultMs: number) => {
     operations.set(id, { finishesAt: now + (migration?.finishesAfterMs ?? defaultMs), ends: migration?.ends ?? SUCCEEDED });
@@ -114,6 +123,11 @@ function cluster(scenario: Scenario = {}) {
       if (noun === "user" && verb === "inspect") {
         return { user: { id: "uid-1", name: "lin", provisioningStatus: "complete", mountedGatewayId: mounted } };
       }
+      if (noun === "user" && verb === "migrate" && args[2] === "lin" && args[3] === "--to-isolated=pod-s" && returned) {
+        mounted = ISOLATED_AGAIN;
+        startMigration(MIGRATION_OUT_AGAIN, scenario.migrationOutAgain, 90_000);
+        return { dryRun: false, response: { uid: "uid-1", gatewayId: ISOLATED_AGAIN, operationId: MIGRATION_OUT_AGAIN } };
+      }
       if (noun === "user" && verb === "migrate" && args[2] === "lin" && args[3] === "--to-isolated=pod-s") {
         runningFrom = now + (scenario.gatewayStartsAfterMs ?? 0);
         boot(scenario.identityReadyAfterBoot !== false);
@@ -122,6 +136,7 @@ function cluster(scenario: Scenario = {}) {
       }
       if (noun === "user" && verb === "migrate" && args[3] === "--to=shared-a") {
         mounted = "shared-a";
+        returned = true;
         staleHeartbeats = 2;
         startMigration(MIGRATION_BACK, scenario.migrationBack, 60_000);
         return { dryRun: false, response: { operationId: MIGRATION_BACK } };
@@ -162,11 +177,17 @@ function cluster(scenario: Scenario = {}) {
     sql: (query: string, variables: Record<string, string>) => {
       sql.push({ sql: query, variables });
       if (query.includes("platform.agent_stores")) {
-        return projectCreated && !scenario.projectStoreNeverRecorded && variables.agent === PROJECT_AGENT ? "shared-a\n" : "";
+        const slug = variables.agent.replace("octogee-lin-proj-", "").replace("-coach", "");
+        return projectsCreated.has(slug) && !scenario.projectStoreNeverRecorded ? "shared-a\n" : "";
       }
       if (query.includes("commercial_lifecycle_status = 'archived'")) {
         events.push("archive project");
         archived = true;
+        return "";
+      }
+      if (query.includes("commercial_lifecycle_status = 'active'")) {
+        events.push("restore project");
+        restored = true;
         return "";
       }
       if (query.includes("model_broker_usage_events")) {
@@ -178,11 +199,11 @@ function cluster(scenario: Scenario = {}) {
     platformApi: async (token: string) => {
       expect(token).toBe("chat-token");
       return {
-        post: async (path: string, body: unknown) => {
-          events.push(`api post ${path}`);
-          expect(body).toEqual({ name: "Harbor", slug: "harbor0" });
-          projectCreated = true;
-          return { workspaceId: "lin", slug: "harbor0" };
+        post: async (path: string, body: { name: string; slug: string }) => {
+          events.push(`api post ${path} ${body.slug}`);
+          expect(body).toEqual({ name: body.name, slug: `${body.name.toLowerCase()}0` });
+          projectsCreated.add(body.slug);
+          return { workspaceId: "lin", slug: body.slug };
         },
       };
     },
@@ -206,11 +227,17 @@ function cluster(scenario: Scenario = {}) {
     setSizingProfile: (name: string, profile: unknown) => { events.push(`sizing set ${name}`); expect(profile).toEqual(POD_PROFILE); },
     readGatewayFile: (gatewayId: string, path: string) => {
       settle();
+      if (gatewayId === "shared-a") {
+        expect(path).toBe(SHARED_CONFIG_FILE);
+        events.push("shared config read");
+        const restoredAgent = restored && !scenario.sharedRefusesRestoredAgent ? { [PROJECT_AGENT]: {} } : {};
+        return JSON.stringify({ agents: { entries: { "octogee-lin-coach": {}, [ACTIVE_AGENT]: {}, ...restoredAgent } } });
+      }
       expect(gatewayId).toBe(ISOLATED);
       if (!running()) throw new Error(`container "gateway" of ${gatewayId} is not running`);
       if (path === CONFIG_FILE) {
         events.push("config read");
-        return JSON.stringify({ agents: { entries: { "octogee-lin-coach": {}, ...(detached ? {} : { [PROJECT_AGENT]: {} }) } } });
+        return JSON.stringify({ agents: { entries: { "octogee-lin-coach": {}, [ACTIVE_AGENT]: {}, ...(detached ? {} : { [PROJECT_AGENT]: {} }) } } });
       }
       if (path === BOOT_FILE || path === READY_FILE) {
         events.push("identity read");
@@ -219,6 +246,7 @@ function cluster(scenario: Scenario = {}) {
       return home.get(path) ?? null;
     },
     writeGatewayFile: (_gatewayId: string, path: string, content: string) => { home.set(path, content); },
+    removeGatewayFile: (gatewayId: string, path: string) => { events.push(`remove ${gatewayId} ${path}`); },
     gatewayLog: () => scenario.log ?? "",
     previousGatewayLog: () => {
       if (scenario.previousLog === undefined) throw new Error("previous terminated container \"gateway\" not found");
@@ -264,7 +292,7 @@ describe("kind isolated gateway smoke", () => {
     await run(deps, options);
 
     const toIsolated = eventIndex(events, "user migrate lin");
-    expect(eventIndex(events, "api post /api/projects")).toBeLessThan(toIsolated);
+    expect(eventIndex(events, "api post /api/projects harbor0")).toBeLessThan(toIsolated);
     const archivedAt = eventIndex(events, "archive project");
     expect(archivedAt).toBeGreaterThan(eventIndex(events, "chat post"));
     expect(archivedAt).toBeLessThan(eventIndex(events, `gateway park ${ISOLATED}`));
@@ -273,6 +301,38 @@ describe("kind isolated gateway smoke", () => {
     expect(events.lastIndexOf("config read")).toBeLessThan(back);
     expect(sql.find(entry => entry.sql.includes("commercial_lifecycle_status"))?.variables).toEqual({ uid: "uid-1", project: "harbor0" });
     expect(sql.find(entry => entry.sql.includes("platform.agent_stores"))?.variables).toEqual({ uid: "uid-1", agent: PROJECT_AGENT });
+  });
+
+  it("restores the archived project on the shared gateway after the return, waits for both project agents there, then moves the user out again", async () => {
+    const { deps, events } = cluster();
+
+    const result = await run(deps, options);
+
+    const back = eventIndex(events, "user migrate lin", eventIndex(events, "user migrate lin") + 1);
+    expect(eventIndex(events, `remove ${ISOLATED} ${ACTIVE_SOUL}`)).toBeLessThan(back);
+    expect(eventIndex(events, `remove ${ISOLATED} ${ACTIVE_SOUL}`)).toBeGreaterThan(eventIndex(events, "api post /api/projects tide0"));
+    const restoredAt = eventIndex(events, "restore project");
+    expect(restoredAt).toBeGreaterThan(eventIndex(events, `gateway retire ${ISOLATED}`));
+    expect(eventIndex(events, "shared config read")).toBeLessThan(restoredAt);
+    const outAgain = eventIndex(events, "user migrate lin", back + 1);
+    expect(events.lastIndexOf("shared config read")).toBeGreaterThan(restoredAt);
+    expect(events.lastIndexOf("shared config read")).toBeLessThan(outAgain);
+    expect(events.lastIndexOf(`ops inspect ${MIGRATION_OUT_AGAIN}`)).toBeGreaterThan(outAgain);
+    expect(result).toMatchObject({ gatewayId: ISOLATED, secondGatewayId: ISOLATED_AGAIN });
+  });
+
+  it("does not move the user out again while the shared gateway has not rostered the restored project's agent", async () => {
+    const { deps, events } = cluster({ sharedRefusesRestoredAgent: true });
+
+    await expect(run(deps, options)).rejects.toThrow(`waiting for shared-a to roster ${PROJECT_AGENT} and ${ACTIVE_AGENT}`);
+    expect(events.filter(event => event.startsWith("user migrate lin"))).toHaveLength(2);
+  });
+
+  it("names the state of the second move out when it fails", async () => {
+    const ends = { status: "failed", steps: [{ name: "pre-sync", status: "failed", error: "push-rsync-state timed out" }] };
+    const { deps } = cluster({ migrationOutAgain: { ends } });
+
+    await expect(run(deps, options)).rejects.toThrow(`migration ${MIGRATION_OUT_AGAIN} to ${ISOLATED_AGAIN} ended failed at step pre-sync: push-rsync-state timed out`);
   });
 
   it("gives each run a new project slug the platform API accepts, so a rerun on the same cluster does not collide", () => {

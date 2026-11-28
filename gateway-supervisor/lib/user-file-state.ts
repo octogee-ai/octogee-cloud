@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { isValidUsername } from "@octogee/shared/types/identity";
 import { brokerTokenExpiryDirectory, removeBrokerTokenExpiriesForSlug } from "./broker-token-refresh.js";
 import { OPENCLAW_DIR } from "./config.js";
+import { clearDepartedWorkspaceState } from "./departed-workspace-state.js";
 import { clearMigratingInPin } from "./local-default-agent-wired.js";
 
 const run = promisify(execFile);
@@ -78,5 +79,6 @@ export async function removeDepartedUserFileState(
   }
   removeBrokerTokenExpiriesForSlug(brokerTokenExpiryDirectory(root), slug, log);
   await fs.rm(workspace, { recursive: true, force: true });
+  await clearDepartedWorkspaceState({ root, slug, log });
   clearMigratingInPin(path.join(root, "customers"), slug);
 }
