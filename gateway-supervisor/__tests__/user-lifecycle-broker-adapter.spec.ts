@@ -2141,6 +2141,77 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       expect(rpc.secretsReload).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledWith("[import:tester10] secrets.reload — model credential OAuth store restored");
     });
+
+    it("skips secrets.reload when config hot-reload changed SecretRefs and degradedSecretsStatus reports no owner for this user", async () => {
+      secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+        async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+      );
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+        elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: true,
+      });
+      const rpc = {
+        ...importRpc(),
+        degradedSecretsStatus: vi.fn(async () => [
+          { ownerKind: "account", ownerId: "mattermost:other-coach", state: "unavailable", paths: [], reason: "secret provider failed" },
+        ]),
+      };
+      const log = vi.fn();
+      const adapter = buildBrokeredLifecycleAdapter({
+        client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+      });
+
+      await adapter.activateImportedUser("tester10");
+
+      expect(rpc.degradedSecretsStatus).toHaveBeenCalledOnce();
+      expect(rpc.secretsReload).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("[import:tester10] secrets.reload skipped — config hot-reload resolved secrets");
+    });
+
+    it("reloads secrets when config hot-reload changed SecretRefs but degradedSecretsStatus still reports this user or fails", async () => {
+      for (const degradedSecretsStatus of [
+        vi.fn(async () => [{ ownerKind: "account", ownerId: "mattermost:tester10-coach", state: "unavailable", paths: [], reason: "secret provider failed" }]),
+        vi.fn(async () => [{ ownerKind: "global", ownerId: "gateway", state: "unavailable", paths: [], reason: "secret provider failed" }]),
+        vi.fn(async () => { throw new Error("status rpc failed"); }),
+      ]) {
+        secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+          async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+        );
+        brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 0, deferred: [] });
+        mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+          elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: true,
+        });
+        const rpc = { ...importRpc(), degradedSecretsStatus };
+        const log = vi.fn();
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+        });
+
+        await adapter.activateImportedUser("tester10");
+
+        expect(rpc.secretsReload).toHaveBeenCalledOnce();
+      }
+    });
+
+    it("still reloads secrets when secret files changed without changing config SecretRefs", async () => {
+      secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+        async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+      );
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 0, deferred: [] });
+      mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+        elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: false,
+      });
+      const rpc = { ...importRpc(), degradedSecretsStatus: vi.fn(async () => []) };
+      const log = vi.fn();
+      const adapter = buildBrokeredLifecycleAdapter({
+        client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+      });
+
+      await adapter.activateImportedUser("tester10");
+
+      expect(rpc.degradedSecretsStatus).not.toHaveBeenCalled();
+      expect(rpc.secretsReload).toHaveBeenCalledOnce();
+    });
   });
 
   it("keeps a committed activation when the reload outlasts a post-commit step", async () => {
@@ -5225,6 +5296,27 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
       expect(log).toHaveBeenCalledWith(
         "[add:alice] secrets.reload — SecretRef added at channels.mattermost.accounts.alice-coach.botToken",
       );
+    });
+
+    it("skips secrets.reload on mount when config patch added SecretRefs and degradedSecretsStatus reports alice clear", async () => {
+      secretMocks.updateMattermostAccountSecrets.mockResolvedValueOnce({ changed: true });
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      const before = { ...mountedConfig, channels: { mattermost: { accounts: {} } } };
+      patchMocks.applyConfigPatch.mockImplementationOnce(async (args) => {
+        args.buildPatch(before);
+        return { mode: "rpc" as const, attempts: 1 };
+      });
+      const rpc = {
+        ...rosterRpc(mountedConfig),
+        degradedSecretsStatus: vi.fn(async () => []),
+      };
+      const { adapter, log } = mountAdapter(rpc as unknown as ReturnType<typeof rosterRpc>);
+
+      await adapter.applyAddUserConfigPatch(aliceSnapshot, { _coachPersonalToken: "pat-1" });
+
+      expect(rpc.degradedSecretsStatus).toHaveBeenCalledOnce();
+      expect(rpc.secretsReload).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("[add:alice] secrets.reload skipped — config hot-reload resolved secrets");
     });
 
     it("reloads when the Mattermost account secrets file changed", async () => {

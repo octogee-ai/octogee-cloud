@@ -118,14 +118,16 @@ export async function applyDefaultAgentModelPatch(
     agents: { ...defaultAgentPatchAgents, ...defaultAgentPatch(current, agentId, model, tools ?? null) },
   });
   try {
-    await applyConfigPatchFn(
+    const result = await applyConfigPatchFn(
       {
         buildPatch,
         buildReplacePaths: (current) => defaultAgentPatchReplacePaths(current, agentId),
         logPrefix: `[byot-sync:${input.slug}]`,
+        skipIfAlreadyApplied: true,
       },
       { maxRetries: Number.POSITIVE_INFINITY, totalDeadlineMs: BYOT_RUNTIME_BOOT_PATIENCE_MS },
     );
+    if (result?.noop === true) return false;
     logFn(
       `[byot-sync] ${input.slug}: defaultAgent model → ${modelPrimary}${
         modelFallbacks.length ? ` (fallback ${modelFallbacks.join(", ")})` : ""
@@ -170,7 +172,7 @@ export async function applyDefaultAgentToolsConvergence(
     return { agents: defaultAgentPatch(current, agentId, null, tools) };
   };
   try {
-    await applyConfigPatchFn(
+    const result = await applyConfigPatchFn(
       {
         buildPatch,
         buildReplacePaths: (current) => defaultAgentPatchReplacePaths(current, agentId),
@@ -179,6 +181,7 @@ export async function applyDefaultAgentToolsConvergence(
       },
       { maxRetries: Number.POSITIVE_INFINITY, totalDeadlineMs: BYOT_RUNTIME_BOOT_PATIENCE_MS },
     );
+    if (result?.noop === true) return false;
     logFn(
       `[byot-sync] ${slug}: defaultAgent tools ${houseOnly ? "trimmed to the free-tier surface" : "converged to the inherited gateway surface"}`,
     );
@@ -193,6 +196,49 @@ export async function applyDefaultAgentToolsConvergence(
 // config.agentModels). Applied last so an explicit pick wins over the class
 // default the standard sync just wrote. Absence means "leave the agent
 // alone" — partial userData from other trigger sites must never reset models.
+async function applySingleAgentModelOverride(
+  slug: string,
+  agentId: string,
+  selection: AgentModelSelection,
+  applyConfigPatchFn: typeof applyConfigPatch,
+  logFn: (m: string) => void,
+): Promise<boolean> {
+  const model = { primary: selection.primary, fallbacks: selection.fallbacks };
+  const platformRefs = [selection.primary, ...selection.fallbacks].filter(isPlatformProviderRef);
+  const toolsConvergence = agentId === `octogee-${slug}-coach` ? null : undefined;
+  const buildPatch = (current: unknown) => ({
+    agents: {
+      ...(platformRefs.length > 0
+        ? { defaults: { models: Object.fromEntries(platformRefs.map((ref) => [ref, {}])) } }
+        : {}),
+      ...defaultAgentPatch(current, agentId, model, toolsConvergence),
+    },
+  });
+  try {
+    const result = await applyConfigPatchFn(
+      {
+        buildPatch,
+        buildReplacePaths: (current) => defaultAgentPatchReplacePaths(current, agentId),
+        logPrefix: `[agent-models:${slug}]`,
+        skipIfAlreadyApplied: true,
+      },
+      { maxRetries: Number.POSITIVE_INFINITY, totalDeadlineMs: BYOT_RUNTIME_BOOT_PATIENCE_MS },
+    );
+    if (result?.noop === true) return false;
+    logFn(
+      `[byot-sync] ${slug}: ${agentId} model → ${selection.primary}${
+        selection.fallbacks.length ? ` (fallback ${selection.fallbacks.join(", ")})` : ""
+      }`,
+    );
+    return true;
+  } catch (e) {
+    logFn(
+      `⚠ [byot-sync] agent-model override failed for ${agentId}: ${(e as Error).message}`,
+    );
+    return false;
+  }
+}
+
 export async function applyAgentModelOverrides(
   slug: string,
   agentModels: AgentModelSelections | undefined,
@@ -220,47 +266,8 @@ export async function applyAgentModelOverrides(
   const applyConfigPatchFn = deps?.applyConfigPatch ?? applyConfigPatch;
   let patched = false;
   for (const [agentId, selection] of owned) {
-    const model = { primary: selection.primary, fallbacks: selection.fallbacks };
-    const platformRefs = [selection.primary, ...selection.fallbacks].filter(
-      isPlatformProviderRef,
-    );
-    // Overrides only run for catalog plans (house-only defers above), so the
-    // agent's rebuild also strips a lingering free-tier trim (fingerprint-
-    // gated). The trim is default-agent-only, so every other owned agent's tools keys
-    // are left untouched.
-    const toolsConvergence = agentId === `octogee-${slug}-coach` ? null : undefined;
-    const buildPatch = (current: unknown) => ({
-      agents: {
-        ...(platformRefs.length > 0
-          ? {
-              defaults: {
-                models: Object.fromEntries(platformRefs.map((ref) => [ref, {}])),
-              },
-            }
-          : {}),
-        ...defaultAgentPatch(current, agentId, model, toolsConvergence),
-      },
-    });
-    try {
-      await applyConfigPatchFn(
-        {
-          buildPatch,
-          buildReplacePaths: (current) => defaultAgentPatchReplacePaths(current, agentId),
-          logPrefix: `[agent-models:${slug}]`,
-          skipIfAlreadyApplied: true,
-        },
-        { maxRetries: Number.POSITIVE_INFINITY, totalDeadlineMs: BYOT_RUNTIME_BOOT_PATIENCE_MS },
-      );
-      logFn(
-        `[byot-sync] ${slug}: ${agentId} model → ${selection.primary}${
-          selection.fallbacks.length ? ` (fallback ${selection.fallbacks.join(", ")})` : ""
-        }`,
-      );
+    if (await applySingleAgentModelOverride(slug, agentId, selection, applyConfigPatchFn, logFn)) {
       patched = true;
-    } catch (e) {
-      logFn(
-        `⚠ [byot-sync] agent-model override failed for ${agentId}: ${(e as Error).message}`,
-      );
     }
   }
   if (opts.projectAgentDefault) {
@@ -330,8 +337,9 @@ async function applyProjectAgentModelDefault(
 ): Promise<boolean> {
   const platformRefs = [model.primary, ...model.fallbacks].filter(isPlatformProviderRef);
   let defaultedAgentIds: string[] = [];
+  let result: Awaited<ReturnType<typeof applyConfigPatch>> | undefined;
   try {
-    await deps.applyConfigPatch(
+    result = await deps.applyConfigPatch(
       {
         buildPatch: (current) => {
           defaultedAgentIds = unpickedProjectAgentIds(current, slug, pickedAgentIds);
@@ -358,7 +366,7 @@ async function applyProjectAgentModelDefault(
     );
     return false;
   }
-  if (defaultedAgentIds.length === 0) return false;
+  if (defaultedAgentIds.length === 0 || result?.noop === true) return false;
   deps.logFn(
     `[byot-sync] ${slug}: ${defaultedAgentIds.join(", ")} model → ${model.primary}${
       model.fallbacks.length ? ` (fallback ${model.fallbacks.join(", ")})` : ""

@@ -4010,6 +4010,38 @@ describe("syncByotForUser — tools convergence wiring", () => {
 
     expect(applyDefaultAgentToolsConvergenceFn).not.toHaveBeenCalled();
   });
+
+  it("skips secrets.reload when default-agent model and tools patches are noops", async () => {
+    const patchCalls: Array<{ skipIfAlreadyApplied?: boolean }> = [];
+    const noopPatch = vi.fn(async (args: { skipIfAlreadyApplied?: boolean }) => {
+      patchCalls.push({ skipIfAlreadyApplied: args.skipIfAlreadyApplied });
+      return { mode: "rpc" as const, attempts: 1, noop: true as const };
+    });
+    const modelChanged = await applyDefaultAgentModelPatch(
+      {
+        slug: "tester-70",
+        model: "platform-meta/muse-ember-1.0",
+        source: "house-model",
+      },
+      { applyConfigPatch: noopPatch as never, logFn: () => {} },
+    );
+    expect(modelChanged).toBe(false);
+    expect(patchCalls[0]?.skipIfAlreadyApplied).toBe(true);
+
+    const toolsChanged = await applyDefaultAgentToolsConvergence("tester-70", true, {
+      applyConfigPatch: noopPatch as never,
+      logFn: () => {},
+    });
+    expect(toolsChanged).toBe(false);
+
+    const overridesChanged = await applyAgentModelOverrides(
+      "tester-70",
+      { "octogee-tester-70-coach": { primary: "platform-openrouter/z-ai/glm-5.2", fallbacks: [] } },
+      { houseOnly: false },
+      { applyConfigPatch: noopPatch as never, logFn: () => {} },
+    );
+    expect(overridesChanged).toBe(false);
+  });
 });
 
 
