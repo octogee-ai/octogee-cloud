@@ -74,6 +74,7 @@ export type SurgeOpenClawProcessSupervisorAction =
 
 export interface SurgeOpenClawProcessSupervisorRequest {
   action: SurgeOpenClawProcessSupervisorAction;
+  awaitReady?: boolean;
   expectedPodUid?: string;
   migrationId?: string;
   slug?: string;
@@ -690,7 +691,7 @@ export interface SurgeOpenClawProcessSupervisorClient {
   releaseTarget: (input: SurgeOpenClawProcessRequest) => Promise<SurgeOpenClawProcessGateState>;
   holdNormal: () => Promise<SurgeOpenClawProcessGateState>;
   hydrate: (input: SurgeOpenClawProcessRequest) => Promise<SurgeOpenClawProcessGateState>;
-  permitNormal: () => Promise<SurgeOpenClawProcessGateState>;
+  permitNormal: (options?: { awaitReady?: boolean }) => Promise<SurgeOpenClawProcessGateState>;
   permit: (input: SurgeOpenClawProcessRequest) => Promise<SurgeOpenClawProcessGateState>;
   resume: (input: SurgeOpenClawProcessRequest) => Promise<SurgeOpenClawProcessGateState>;
   unreserve: (input: SurgeOpenClawProcessRequest) => Promise<SurgeOpenClawProcessGateState>;
@@ -781,7 +782,10 @@ export function createSurgeOpenClawProcessSupervisorClient(
     releaseTarget: (input) => call({ action: "release-target", ...input }),
     holdNormal: () => call({ action: "hold-normal" }),
     hydrate: (input) => call({ action: "hydrate", ...input }),
-    permitNormal: () => call({ action: "permit-normal" }),
+    permitNormal: (options) => call({
+      action: "permit-normal",
+      ...(options?.awaitReady === false ? { awaitReady: false } : {}),
+    }),
     permit: (input) => call({ action: "permit", ...input }),
     resume: (input) => call({ action: "resume", ...input }),
     unreserve: (input) => call({ action: "unreserve", ...input }),

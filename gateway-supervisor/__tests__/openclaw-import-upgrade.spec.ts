@@ -314,3 +314,43 @@ it("fails without falling back to Native CLI when the image schema descriptor is
     read.mockRestore();
   }
 });
+
+it("passes OPENCLAW_NO_RESPAWN, isolates doctor from port 18789, and reuses the bootstrapped baseline across users", async () => {
+  const f = await fixture();
+  const original = f.run.getMockImplementation()!;
+  let currentVersion = 37;
+  const query = vi.fn(async () => [{ store_id: f.stores[0]!.storeId, version: currentVersion, role: "agent", agent_id: f.stores[0]!.agentId, schema_version: currentVersion }]);
+  const doctorConfigs: Array<{ gateway?: { port?: number; bind?: string }; env: NodeJS.ProcessEnv; hasStateFile: boolean }> = [];
+  f.run.mockImplementation(async (args, options) => {
+    if (args[0] === "setup") {
+      expect(options.env.OPENCLAW_NO_RESPAWN).toBe("1");
+      await fs.mkdir(path.join(options.env.OPENCLAW_STATE_DIR!, "state"), { recursive: true });
+      await fs.writeFile(path.join(options.env.OPENCLAW_STATE_DIR!, "state", "openclaw.sqlite"), "baseline-state");
+      return original(args, options);
+    }
+    if (args[0] === "doctor") {
+      expect(options.env.OPENCLAW_NO_RESPAWN).toBe("1");
+      const config = JSON.parse(await fs.readFile(options.env.OPENCLAW_CONFIG_PATH!, "utf8"));
+      const stateBytes = await fs.readFile(path.join(options.env.OPENCLAW_STATE_DIR!, "state", "openclaw.sqlite"), "utf8").catch(() => "");
+      doctorConfigs.push({ gateway: config.gateway, env: options.env, hasStateFile: stateBytes === "baseline-state" });
+      currentVersion = 38;
+      return { code: 0, stdout: "" };
+    }
+    return original(args, options);
+  });
+
+  await upgradeImportedAgentStores({ ...f, query: query as unknown as typeof f.query });
+  currentVersion = 37;
+  await upgradeImportedAgentStores({ ...f, query: query as unknown as typeof f.query });
+
+  expect(f.run.mock.calls.filter(([args]) => args[0] === "setup")).toHaveLength(1);
+  expect(doctorConfigs).toHaveLength(2);
+  for (const call of doctorConfigs) {
+    expect(call.hasStateFile).toBe(true);
+    expect(call.gateway?.port).toBe(18799);
+    expect(call.gateway?.bind).toBe("loopback");
+  }
+  for (const [, options] of f.run.mock.calls) {
+    await expect(fs.stat(options.env.OPENCLAW_STATE_DIR!)).rejects.toMatchObject({ code: "ENOENT" });
+  }
+});

@@ -1837,6 +1837,41 @@ describe("configured user surge release", () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it.each([
+    { runtimeKind: "cluster", expectedArg: { awaitReady: false } },
+    { runtimeKind: "gce-vm", expectedArg: undefined },
+  ] as const)("passes awaitReady=$expectedArg on warm isolated prelaunch restart for $runtimeKind", async ({ runtimeKind, expectedArg }) => {
+    stubUserClaim("ceckert-test");
+    vi.stubEnv("POD_UID", "target-pod");
+    vi.stubEnv("GATEWAY_RUNTIME_KIND", runtimeKind);
+    const request = { migrationId: "cleanup-runtime-kind", slug: "ceckert-test", targetPodUid: "target-pod" };
+    let state: SurgeOpenClawProcessGateState = { version: 1, podUid: "target-pod", role: "normal", mode: "permitted", phase: "running" };
+    const processGate = {
+      status: async () => state,
+      holdNormal: vi.fn(async () => { state = { ...state, mode: "held", phase: "held" }; return state; }),
+      hydrate: vi.fn(async () => { state = { version: 1, podUid: "target-pod", role: "target", mode: "held", phase: "held", ...request, completionStarted: false }; return state; }),
+      unreserve: vi.fn(async () => { state = { version: 1, podUid: "target-pod", role: "normal", mode: "held", phase: "held", terminalTarget: { ...request, completionStarted: false } }; return state; }),
+      permitNormal: vi.fn(async () => { state = { ...state, mode: "permitted", phase: "starting" }; return state; }),
+    } as unknown as SurgeOpenClawProcessSupervisorClient;
+    try {
+      const wiring = createIsolatedSurgeGateWiring({
+        adapter: {} as UserLifecycleAdapter,
+        processGate,
+        surgeReadiness: { release: vi.fn(async () => undefined) } as unknown as SurgeReadinessGate,
+        waitForGatewayHealthy: async () => undefined,
+        waitForGatewayReady: async () => undefined,
+        log: () => undefined,
+        provisioning: { beginProvisioning: vi.fn(), finishProvisioning: vi.fn() },
+        waitForActiveProvisioningDrain: async () => undefined,
+        configuredUserAssigned: async () => false,
+        prepareIsolatedPrelaunch: async () => undefined,
+      });
+      await wiring.unreserveSurgeTarget(request, async (assertCurrent) => { await assertCurrent(); });
+      if (expectedArg === undefined) expect(processGate.permitNormal).toHaveBeenCalledExactlyOnceWith();
+      else expect(processGate.permitNormal).toHaveBeenCalledExactlyOnceWith(expectedArg);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("reholds, drains, and finalizes a permitted target unreserve without raw fallback", async () => {
     stubUserClaim("ceckert-test");
     vi.stubEnv("POD_UID", "target-pod");

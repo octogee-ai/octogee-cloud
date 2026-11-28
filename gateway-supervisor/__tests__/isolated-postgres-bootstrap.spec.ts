@@ -110,20 +110,41 @@ it("refuses to prepare foreign local or newly recorded state after interruption"
   expect(prepare).toHaveBeenCalledOnce();
 });
 
-it("uses native journal preparation for a claimed fresh isolated cluster slot only", async () => {
+it("uses native journal preparation for fresh owned isolated cluster pods and refuses foreign checkpoint slots", async () => {
   const options = await fixture();
   const cluster = { ...options, env: { ...options.env, GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "gw-s-slot" } };
   const prepare = vi.fn();
-  expect(await prepareFreshIsolatedPostgresState(cluster, prepare)).toBe(false);
+  expect(await prepareFreshIsolatedPostgresState({
+    ...cluster, env: { ...cluster.env, GATEWAY_ID: "" },
+  }, prepare)).toBe(false);
   expect(await prepareFreshIsolatedPostgresState({
     ...cluster, env: { ...cluster.env, OCTOGEE_CHECKPOINT_SLOT_ID: "gw-s-another" },
   }, prepare)).toBe(false);
-  const slot = { ...cluster, env: { ...cluster.env, OCTOGEE_CHECKPOINT_SLOT_ID: "gw-s-slot" } };
-  expect(await prepareFreshIsolatedPostgresState({ ...slot, noRecordedAnchors: false }, prepare)).toBe(false);
+  expect(await prepareFreshIsolatedPostgresState({ ...cluster, noRecordedAnchors: false }, prepare)).toBe(false);
   expect(await prepareFreshIsolatedPostgresState({
-    ...slot, env: { ...slot.env, OPENCLAW_AGENT_STORE_DSN: "" },
+    ...cluster, env: { ...cluster.env, OPENCLAW_AGENT_STORE_DSN: "" },
   }, prepare)).toBe(false);
-  expect(await prepareFreshIsolatedPostgresState(slot, prepare)).toBe(true);
+  expect(await prepareFreshIsolatedPostgresState({
+    ...cluster, noRecordedAnchors: false, noRecordedHostAnchors: true,
+  }, prepare)).toBe(true);
   expect(prepare).toHaveBeenCalledOnce();
-  expect(readPostgresAgentAnchor(path.join(slot.stateDir, "state", "openclaw.sqlite"))).toEqual(prepare.mock.calls[0]?.[1]);
+  expect(readPostgresAgentAnchor(path.join(cluster.stateDir, "state", "openclaw.sqlite"))).toEqual(prepare.mock.calls[0]?.[1]);
+});
+
+it("prepares a fresh isolated VM or checkpoint slot when only agent anchors exist on Shared", async () => {
+  for (const extraEnv of [
+    { GATEWAY_RUNTIME_KIND: "gce-vm" },
+    { GATEWAY_RUNTIME_KIND: "cluster", GATEWAY_ID: "gw-s-slot", OCTOGEE_CHECKPOINT_SLOT_ID: "gw-s-slot" },
+  ]) {
+    const options = await fixture();
+    const prepare = vi.fn();
+    expect(await prepareFreshIsolatedPostgresState({
+      ...options,
+      env: { ...options.env, ...extraEnv },
+      noRecordedAnchors: false,
+      noRecordedHostAnchors: true,
+    }, prepare)).toBe(true);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(readPostgresAgentAnchor(path.join(options.stateDir, "state", "openclaw.sqlite"))).toEqual(prepare.mock.calls[0]?.[1]);
+  }
 });

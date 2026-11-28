@@ -60,31 +60,52 @@ export function installedSharedOptions(input: {
   return matching ? { ...opts, sharedRuntimeIntent: instance.sharedRuntimeIntent.fingerprint } : null;
 }
 
-export function installedSharedReleaseReader(settings: GatewayDeploymentSettings, helm: HelmRunner, log: (message: string) => void) {
+export const SHARED_RELEASE_OBSERVATION_GRACE_MS = 10 * 60_000;
+
+function remember<V>(entries: Map<string, V>, key: string, value: V): void {
+  entries.delete(key);
+  if (entries.size >= 256) entries.delete(entries.keys().next().value!);
+  entries.set(key, value);
+}
+
+export function installedSharedReleaseReader(
+  settings: GatewayDeploymentSettings, helm: HelmRunner, log: (message: string) => void, now: () => number = Date.now,
+) {
   const slots = Array.from({ length: 4 }, () => Promise.resolve());
   const accepted = new Map<string, string>();
+  const verified = new Map<string, { inputs: string; at: number }>();
   const active = new Map<string, Promise<boolean>>();
 
-  async function inspect(gateway: DurableGateway, current: ReleasePayload, requested: ReleasePayload) {
+  async function verify(gateway: DurableGateway, current: ReleasePayload, requested: ReleasePayload) {
     if (!helm.readSharedInstallation || !helm.matchesDeployedManifest) return false;
+    const [observed, values] = await Promise.all([
+      helm.readSharedInstallation({ namespace: settings.namespace, gatewayId: gateway.gatewayId }),
+      settings.valuesFile ? readFile(settings.valuesFile) : null,
+    ]);
+    const receipt = observed?.instance.sharedRuntimeIntent;
+    if (!observed || !receipt) return false;
+    const opts = installedSharedOptions({ gateway, current, requested, instance: observed.instance, settings, values });
+    if (!opts) return false;
+    const key = JSON.stringify([receipt.helmRevision, opts.sharedRuntimeIntent, observed.manifestDigest, releasePayloadHash(requested)]);
+    if (accepted.get(gateway.gatewayId) === key) return true;
+    if (!await helm.matchesDeployedManifest(opts, receipt.helmRevision)) return false;
+    remember(accepted, gateway.gatewayId, key);
+    return true;
+  }
+
+  async function inspect(gateway: DurableGateway, current: ReleasePayload, requested: ReleasePayload, inputs: string) {
     try {
-      const [observed, values] = await Promise.all([
-        helm.readSharedInstallation({ namespace: settings.namespace, gatewayId: gateway.gatewayId }),
-        settings.valuesFile ? readFile(settings.valuesFile) : null,
-      ]);
-      const receipt = observed?.instance.sharedRuntimeIntent;
-      if (!observed || !receipt) return false;
-      const opts = installedSharedOptions({ gateway, current, requested, instance: observed.instance, settings, values });
-      if (!opts) return false;
-      const key = JSON.stringify([receipt.helmRevision, opts.sharedRuntimeIntent, observed.manifestDigest, releasePayloadHash(requested)]);
-      if (accepted.get(gateway.gatewayId) === key) return true;
-      if (!await helm.matchesDeployedManifest(opts, receipt.helmRevision)) return false;
-      if (accepted.size >= 256) accepted.delete(accepted.keys().next().value!);
-      accepted.set(gateway.gatewayId, key);
-      return true;
+      const installed = await verify(gateway, current, requested);
+      if (installed) remember(verified, gateway.gatewayId, { inputs, at: now() });
+      else verified.delete(gateway.gatewayId);
+      return installed;
     } catch (error) {
-      log(`[shared-release] cannot verify installed release for ${gateway.gatewayId}: ${error instanceof Error ? error.name : "unknown error"}`);
-      return false;
+      const message = error instanceof Error ? error.message : String(error);
+      const earlier = verified.get(gateway.gatewayId);
+      const retained = earlier?.inputs === inputs && now() - earlier.at <= SHARED_RELEASE_OBSERVATION_GRACE_MS;
+      log(`[shared-release] cannot verify installed release for ${gateway.gatewayId}${retained ? ", keeping its verification from " +
+        new Date(earlier.at).toISOString() : ""}: ${message.slice(0, 500)}`);
+      return retained;
     }
   }
 
@@ -93,7 +114,7 @@ export function installedSharedReleaseReader(settings: GatewayDeploymentSettings
     const key = JSON.stringify([gateway, current, requested]);
     const pending = active.get(key);
     if (pending) return pending;
-    const result = slots.shift()!.then(() => inspect(gateway, current, requested)).finally(() => active.delete(key));
+    const result = slots.shift()!.then(() => inspect(gateway, current, requested, key)).finally(() => active.delete(key));
     active.set(key, result);
     slots.push(result.then(() => undefined, () => undefined));
     return result;

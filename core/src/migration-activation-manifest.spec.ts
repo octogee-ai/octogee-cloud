@@ -1334,6 +1334,43 @@ describe("migration activation manifest", () => {
       ],
     });
   });
+  it("reports whether the activation patch changed Mattermost account SecretRefs", async () => {
+    const m = manifest();
+    const added = await applyOpenClawActivationManifest(m, {
+      rpc: { configGet: async () => ({ config: {}, hash: "before" }), configPatch: async () => ({ hash: "after" }) } as never,
+      log: vi.fn(),
+    });
+    expect(added.secretContractChanged).toBe(true);
+
+    const unchanged = await applyOpenClawActivationManifest(m, {
+      rpc: {
+        configGet: async () => ({
+          config: {
+            channels: {
+              mattermost: {
+                accounts: {
+                  [m.accountId]: { botToken: m.mattermostAccount.botToken },
+                },
+              },
+            },
+          },
+          hash: "before",
+        }),
+        configPatch: async () => ({ hash: "after" }),
+      } as never,
+      log: vi.fn(),
+    });
+    expect(unchanged.secretContractChanged).toBe(false);
+
+    const noop = await applyOpenClawActivationManifest(m, {
+      rpc: {
+        configGet: async () => ({ config: {}, hash: "before", configRevisionHash: "r1", appliedConfigHash: "r1" }),
+        configPatch: async () => ({ hash: "before", noop: true }),
+      } as never,
+      log: vi.fn(),
+    });
+    expect(noop.secretContractChanged).toBe(false);
+  });
 });
 
 describe("migration activation manifest — patch budget", () => {

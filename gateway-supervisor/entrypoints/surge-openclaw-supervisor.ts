@@ -102,6 +102,12 @@ function parseRequest(value: unknown): SurgeOpenClawProcessSupervisorRequest {
     throw new Error("invalid surge OpenClaw process supervisor action");
   }
   if (action === "migrate-builder-stores") return { action, expectedPodUid: requireString(candidate.expectedPodUid, "expectedPodUid") };
+  if (action === "permit-normal") {
+    if (candidate.awaitReady !== undefined && typeof candidate.awaitReady !== "boolean") {
+      throw new Error("invalid surge OpenClaw process supervisor awaitReady");
+    }
+    return candidate.awaitReady === undefined ? { action } : { action, awaitReady: candidate.awaitReady };
+  }
   if (!surgeOpenClawProcessActionNamesMigration(action)) return { action };
   return {
     action,
@@ -197,7 +203,7 @@ export async function prepareConfiguredIsolatedTarget(
   env: NodeJS.ProcessEnv = process.env,
   run: typeof waitForSpawn = waitForSpawn,
 ): Promise<void> {
-  const tsx = env.TSX ?? "/octogee/scripts/node_modules/.bin/tsx";
+  const tsx = env.TSX ?? "/octogee/gateway/bundled-entrypoint-runner.sh";
   const policy = env.GATEWAY_CLASS_POLICY_PATH ?? "/octogee/gateway/apply-gateway-class-policy.mjs";
   const userEnv = { ...env, GATEWAY_CLASS: "isolated" };
   await run(tsx, ["/octogee/scripts/entrypoints/pre-boot-config.ts"], { env: userEnv });
@@ -879,17 +885,15 @@ export async function startSurgeOpenClawSupervisor(
     stopChild,
   });
 
-  const permit = async (input: SurgeOpenClawProcessRequest): Promise<SurgeOpenClawProcessGateState> => {
-    await gate.permitTarget({ ...input, podUid: opts.podUid });
-    return startChild();
-  };
-
-  const hydrate = async (input: SurgeOpenClawProcessRequest): Promise<SurgeOpenClawProcessGateState> =>
-    gate.hydrateTarget({ ...input, podUid: opts.podUid });
-
-  const permitNormal = async (): Promise<SurgeOpenClawProcessGateState> => {
-    await gate.permitNormal({ podUid: opts.podUid });
-    return startChild(true);
+  const permitNormal = async (awaitReady: boolean): Promise<SurgeOpenClawProcessGateState> => {
+    const permitted = await gate.permitNormal({ podUid: opts.podUid });
+    if (awaitReady) return startChild(true);
+    if (!child) {
+      void runSerial(() => startChild(true)).catch((error) => {
+        opts.log(`[surge-openclaw] background permitted start failed: ${errorMessage(error)}`);
+      });
+    }
+    return permitted;
   };
 
   const holdNormal = async (): Promise<SurgeOpenClawProcessGateState> => {
@@ -904,11 +908,21 @@ export async function startSurgeOpenClawSupervisor(
     return gate.settle({ podUid: opts.podUid });
   };
 
-  const unreserve = (input: SurgeOpenClawProcessRequest): Promise<SurgeOpenClawProcessGateState> =>
-    gate.unreserveTarget({ ...input, podUid: opts.podUid });
-
-  const settle = (): Promise<SurgeOpenClawProcessGateState> =>
-    gate.settle({ podUid: opts.podUid });
+  const migrationHandlers: Record<
+    "hold" | "rehold" | "rehold-released-target" | "claim" | "finalize-cancellation" | "release-target" | "hydrate" | "permit" | "unreserve" | "resume",
+    (input: SurgeOpenClawProcessRequest) => Promise<SurgeOpenClawProcessGateState>
+  > = {
+    hold: targetOperations.hold,
+    rehold: targetOperations.reholdTarget,
+    "rehold-released-target": targetOperations.reholdReleasedTarget,
+    claim: targetOperations.claimTargetCompletion,
+    "finalize-cancellation": targetOperations.finalizeTargetCancellation,
+    "release-target": targetOperations.releaseTarget,
+    hydrate: (input) => gate.hydrateTarget({ ...input, podUid: opts.podUid }),
+    permit: async (input) => { await gate.permitTarget({ ...input, podUid: opts.podUid }); return startChild(); },
+    unreserve: (input) => gate.unreserveTarget({ ...input, podUid: opts.podUid }),
+    resume,
+  };
 
   const readinessReleased = opts.readinessReleased ?? (() => readiness.released());
   const initial = await initializeBootGate({ opts, gate, readiness, readinessReleased, reapOrphanedOpenClaw });
@@ -916,28 +930,16 @@ export async function startSurgeOpenClawSupervisor(
   await fs.mkdir(opts.openclawDir, { recursive: true });
   await fs.rm(socketPath, { force: true });
   const createServer = opts.createServer ?? http.createServer;
-  const dispatch = (
-    request: SurgeOpenClawProcessSupervisorRequest,
-  ): Promise<SurgeOpenClawProcessGateState> => {
+  const dispatch = (request: SurgeOpenClawProcessSupervisorRequest): Promise<SurgeOpenClawProcessGateState> => {
     if (request.action === "status") return current();
     if (request.action === "hold-normal") return holdNormal();
     if (request.action === "migrate-builder-stores") return migrateHeldUserStores({
       expectedPodUid: request.expectedPodUid, opts, current, hold: holdNormal, reap: reapOrphanedOpenClaw,
       hasChild: () => child !== null, readinessReleased, signal: shutdown.signal,
     });
-    if (request.action === "permit-normal") return permitNormal();
-    if (request.action === "settle") return settle();
-    const input = requestIdentity(request);
-    if (request.action === "hold") return targetOperations.hold(input);
-    if (request.action === "rehold") return targetOperations.reholdTarget(input);
-    if (request.action === "rehold-released-target") return targetOperations.reholdReleasedTarget(input);
-    if (request.action === "claim") return targetOperations.claimTargetCompletion(input);
-    if (request.action === "finalize-cancellation") return targetOperations.finalizeTargetCancellation(input);
-    if (request.action === "release-target") return targetOperations.releaseTarget(input);
-    if (request.action === "hydrate") return hydrate(input);
-    if (request.action === "permit") return permit(input);
-    if (request.action === "unreserve") return unreserve(input);
-    return resume(input);
+    if (request.action === "permit-normal") return permitNormal(request.awaitReady !== false);
+    if (request.action === "settle") return gate.settle({ podUid: opts.podUid });
+    return migrationHandlers[request.action](requestIdentity(request));
   };
   // A gate read must never queue behind a start or stop; the readiness probe
   // calls it while a permit holds the lane.

@@ -1073,7 +1073,10 @@ describe("pending operation watch", () => {
     },
   );
 
-  it("claims a waiting operator move when its isolated gateway publishes the first live release", async () => {
+  it.each([
+    { label: "the first live release", liveRelease: null, desiredRelease: 1 },
+    { label: "a subsequent live release", liveRelease: 1, desiredRelease: 2 },
+  ])("claims a waiting operator move when its isolated gateway publishes $label", async ({ liveRelease, desiredRelease }) => {
     const retryAt = Date.now() + 60_000;
     const move = {
       ...baseOp({
@@ -1096,7 +1099,7 @@ describe("pending operation watch", () => {
       gateways: {
         isolated: {
           gatewayId: "isolated", gatewayClass: "isolated", ownerUid: "uid",
-          allocation: { kind: "disposable-builder" }, liveRelease: null, updatedAt: 1,
+          allocation: { kind: "disposable-builder" }, liveRelease, desiredRelease, updatedAt: 1,
         },
       },
       runtimes: { isolated: { lifecycle: "provisioning" } },

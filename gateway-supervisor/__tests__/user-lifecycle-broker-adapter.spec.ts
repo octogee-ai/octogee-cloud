@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { FleetBrokerClient } from "../lib/fleet-broker-client.js";
 import {
   buildBrokeredLifecycleAdapter,
@@ -2141,6 +2141,77 @@ describe("buildBrokeredLifecycleAdapter migration import activation", () => {
       expect(rpc.secretsReload).toHaveBeenCalledOnce();
       expect(log).toHaveBeenCalledWith("[import:tester10] secrets.reload — model credential OAuth store restored");
     });
+
+    it("skips secrets.reload when config hot-reload changed SecretRefs and degradedSecretsStatus reports no owner for this user", async () => {
+      secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+        async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+      );
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+        elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: true,
+      });
+      const rpc = {
+        ...importRpc(),
+        degradedSecretsStatus: vi.fn(async () => [
+          { ownerKind: "account", ownerId: "mattermost:other-coach", state: "unavailable", paths: [], reason: "secret provider failed" },
+        ]),
+      };
+      const log = vi.fn();
+      const adapter = buildBrokeredLifecycleAdapter({
+        client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+      });
+
+      await adapter.activateImportedUser("tester10");
+
+      expect(rpc.degradedSecretsStatus).toHaveBeenCalledOnce();
+      expect(rpc.secretsReload).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("[import:tester10] secrets.reload skipped — config hot-reload resolved secrets");
+    });
+
+    it("reloads secrets when config hot-reload changed SecretRefs but degradedSecretsStatus still reports this user or fails", async () => {
+      for (const degradedSecretsStatus of [
+        vi.fn(async () => [{ ownerKind: "account", ownerId: "mattermost:tester10-coach", state: "unavailable", paths: [], reason: "secret provider failed" }]),
+        vi.fn(async () => [{ ownerKind: "global", ownerId: "gateway", state: "unavailable", paths: [], reason: "secret provider failed" }]),
+        vi.fn(async () => { throw new Error("status rpc failed"); }),
+      ]) {
+        secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+          async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+        );
+        brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 0, deferred: [] });
+        mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+          elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: true,
+        });
+        const rpc = { ...importRpc(), degradedSecretsStatus };
+        const log = vi.fn();
+        const adapter = buildBrokeredLifecycleAdapter({
+          client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+        });
+
+        await adapter.activateImportedUser("tester10");
+
+        expect(rpc.secretsReload).toHaveBeenCalledOnce();
+      }
+    });
+
+    it("still reloads secrets when secret files changed without changing config SecretRefs", async () => {
+      secretMocks.materializeActivationManifestSecret.mockImplementationOnce(
+        async (_dir: string, manifest: unknown) => ({ manifest, secretsChanged: true }),
+      );
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 0, deferred: [] });
+      mocks.applyOpenClawActivationManifest.mockResolvedValueOnce({
+        elapsedMs: 42, routingActivationRequired: false, restartExistingAccountIds: [], configNoop: false, secretContractChanged: false,
+      });
+      const rpc = { ...importRpc(), degradedSecretsStatus: vi.fn(async () => []) };
+      const log = vi.fn();
+      const adapter = buildBrokeredLifecycleAdapter({
+        client: mkClient(), rpc: rpc as unknown as GatewayRpcClient, log, isIsolatedGateway: () => false,
+      });
+
+      await adapter.activateImportedUser("tester10");
+
+      expect(rpc.degradedSecretsStatus).not.toHaveBeenCalled();
+      expect(rpc.secretsReload).toHaveBeenCalledOnce();
+    });
   });
 
   it("keeps a committed activation when the reload outlasts a post-commit step", async () => {
@@ -4033,6 +4104,80 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
     }
   });
 
+  describe("an archived project agent whose folder is missing on a shared gateway", () => {
+    const coach = { agentId: "octogee-alice-coach", storeId: "92c817cc-770f-466d-b4a6-4e9b02998363", schema: "octogee_agent_92c817cc770f466d" };
+    const archived = { agentId: "octogee-alice-proj-pier-coach", storeId: "3313965d-1e56-4006-9d9c-1b0289fafcfa", schema: "octogee_agent_3313965d1e564006" };
+    const schemaGone = { agentId: "octogee-alice-proj-dune-coach", storeId: "5a1f0c3e-2b7d-4e8a-9c61-0d2e4f6a8b10", schema: "octogee_agent_5a1f0c3e2b7d4e8a" };
+    const foreign = { agentId: "octogee-alice-proj-reef-coach", storeId: "7c3e9a14-6d2b-4f80-8e15-3a9b0c7d5e21", schema: "octogee_agent_7c3e9a146d2b4f80" };
+    const deleted = { agentId: "octogee-alice-proj-gone-coach", storeId: "9e2d4b61-0a7c-4c38-b5f9-1d6e8a3c2f47", schema: "octogee_agent_9e2d4b610a7c4c38" };
+    const schemaOwners: Record<string, string> = {
+      [coach.schema]: coach.agentId, [archived.schema]: archived.agentId, [foreign.schema]: "octogee-bob-proj-reef-coach", [deleted.schema]: deleted.agentId,
+    };
+
+    async function mount(recorded: typeof coach[], prepare?: (dir: string) => Promise<void>) {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "shared-archived-rebuild-"));
+      const priorConfig = await fs.readFile(OPENCLAW_CONFIG).catch(() => undefined);
+      onTestFinished(async () => {
+        await fs.rm(dir, { recursive: true, force: true });
+        if (priorConfig) await fs.writeFile(OPENCLAW_CONFIG, priorConfig);
+        else await fs.rm(OPENCLAW_CONFIG, { force: true });
+      });
+      await fs.writeFile(OPENCLAW_CONFIG, JSON.stringify({ database: { engine: "postgres" } }));
+      vi.stubEnv("OPENCLAW_STATE_DIR", dir);
+      vi.stubEnv("OPENCLAW_AGENT_STORE_DSN", "synthetic-pg-test");
+      vi.stubEnv("GATEWAY_CLASS", "shared");
+      await prepare?.(dir);
+      anchorQuery.mockImplementation(async (target, sql) => {
+        if (target.schema === schemaGone.schema) throw Object.assign(new Error(`relation "${target.schema}.openclaw_schema_meta" does not exist`), { code: "42P01" });
+        return sql.includes("openclaw_schema_meta") ? [{ store_id: target.storeId }] : [{ agent_id: schemaOwners[target.schema] }];
+      });
+      const snapshot = aliceSnapshot({ archivedProjectIds: ["pier", "dune", "reef"] });
+      const report = vi.fn(async () => undefined);
+      const rpc = mkGatewayRpc();
+      const log = vi.fn();
+      const adapter = buildBrokeredLifecycleAdapter({ client: mkClient({
+        userSnapshot: vi.fn(async () => snapshot),
+        readAgentAnchors: vi.fn(async () => ({ anchors: recorded, assignment: { uid: snapshot.uid, epoch: 0, state: "serving" as const } })),
+        reportAgentAnchors: report,
+      }), rpc, log, isIsolatedGateway: () => false });
+      await adapter.applyAddUserConfigPatch(snapshot, { _coachPersonalToken: "default-agent-pat" });
+      return { dir, report, rpc, log: log.mock.calls.map(([message]) => String(message)) };
+    }
+
+    it("rebuilds the folder from the surviving store on mount, unregistered, so the next move carries it", async () => {
+      const { dir, report, rpc, log } = await mount([coach, archived]);
+
+      expect(await readLocalAgentAnchors(dir, [archived.agentId])).toEqual([archived]);
+      expect(await fs.readdir(path.join(dir, "agents", archived.agentId))).toEqual(["agent"]);
+      expect(await fs.readdir(path.join(dir, "agents", archived.agentId, "agent"))).toEqual(["openclaw-agent.sqlite"]);
+      expect(rpc.agentsCreate.mock.calls.map(([request]) => request.name)).not.toContain(archived.agentId);
+      expect(report).toHaveBeenCalledWith(expect.objectContaining({ anchors: [coach], configuredAgentIds: [coach.agentId] }));
+      expect(log).toContain(`[agent-anchors] rebuilt archived project agent folder from its PostgreSQL store agentId=${archived.agentId}`);
+    });
+
+    it("leaves an existing archived folder as it is", async () => {
+      const kept = { ...archived, storeId: "0b8f6d2a-4c1e-4a97-8d3b-5e7f9a1c2d64" };
+      const { dir, log } = await mount([coach, archived], target => landAgentAnchors(target, [kept]).then(() => undefined));
+
+      expect(await readLocalAgentAnchors(dir, [archived.agentId])).toEqual([kept]);
+      expect(log.some(message => message.includes("rebuilt archived"))).toBe(false);
+    });
+
+    it("rebuilds nothing for a store whose schema is gone, a schema owned by another agent, or a deleted project, and still mounts the user", async () => {
+      const { dir, rpc, log } = await mount([coach, schemaGone, foreign, deleted]);
+
+      for (const anchor of [schemaGone, foreign, deleted]) {
+        await expect(fs.lstat(path.join(dir, "agents", anchor.agentId))).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      expect(rpc.agentsCreate.mock.calls.map(([request]) => request.name)).toEqual([coach.agentId]);
+      expect(log).toEqual(expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^🔴 \\[agent-anchors\\] archived project agent folder not rebuilt agentId=${schemaGone.agentId}: .*is missing; refusing to land an anchor that would open an empty store`)),
+        `🔴 [agent-anchors] archived project agent folder not rebuilt agentId=${foreign.agentId}: PostgreSQL schema ${foreign.schema} belongs to octogee-bob-proj-reef-coach, not ${foreign.agentId}`,
+      ]));
+      expect(log.some(message => message.includes(deleted.agentId))).toBe(false);
+    });
+  });
+
   it.each(["read", "verify", "report", "local-mismatch"])("refuses Shared attach on %s failure without accepting replacement identities", async (failure) => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "shared-anchor-refuse-"));
     const priorConfig = await fs.readFile(OPENCLAW_CONFIG).catch(() => undefined);
@@ -5151,6 +5296,27 @@ describe("buildBrokeredLifecycleAdapter add config patch", () => {
       expect(log).toHaveBeenCalledWith(
         "[add:alice] secrets.reload — SecretRef added at channels.mattermost.accounts.alice-coach.botToken",
       );
+    });
+
+    it("skips secrets.reload on mount when config patch added SecretRefs and degradedSecretsStatus reports alice clear", async () => {
+      secretMocks.updateMattermostAccountSecrets.mockResolvedValueOnce({ changed: true });
+      brokerCatalogMocks.materializeBrokerProfilesForAgents.mockReturnValueOnce({ materialized: 1, deferred: [] });
+      const before = { ...mountedConfig, channels: { mattermost: { accounts: {} } } };
+      patchMocks.applyConfigPatch.mockImplementationOnce(async (args) => {
+        args.buildPatch(before);
+        return { mode: "rpc" as const, attempts: 1 };
+      });
+      const rpc = {
+        ...rosterRpc(mountedConfig),
+        degradedSecretsStatus: vi.fn(async () => []),
+      };
+      const { adapter, log } = mountAdapter(rpc as unknown as ReturnType<typeof rosterRpc>);
+
+      await adapter.applyAddUserConfigPatch(aliceSnapshot, { _coachPersonalToken: "pat-1" });
+
+      expect(rpc.degradedSecretsStatus).toHaveBeenCalledOnce();
+      expect(rpc.secretsReload).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith("[add:alice] secrets.reload skipped — config hot-reload resolved secrets");
     });
 
     it("reloads when the Mattermost account secrets file changed", async () => {

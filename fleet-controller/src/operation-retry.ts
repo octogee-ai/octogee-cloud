@@ -95,9 +95,9 @@ export function classifyOperationFailure(
 export const MAX_OPERATION_ATTEMPTS = 3;
 export const MAX_PREEMPTED_OPERATION_ATTEMPTS = 6;
 export const MAX_OPERATION_ATTEMPT_HISTORY = 20;
-export const MAX_OPERATOR_ISOLATED_GATEWAY_WAIT_ATTEMPTS = 30;
+export const MAX_OPERATOR_ISOLATED_GATEWAY_WAIT_ATTEMPTS = 360;
 export const WAITING_FOR_ISOLATED_GATEWAY = "isolated-gateway-ready";
-export const OPERATOR_ISOLATED_GATEWAY_WAIT_MS = 60_000;
+export const OPERATOR_ISOLATED_GATEWAY_WAIT_MS = 5_000;
 
 // `completedAt` is a plain epoch number, which a native Firestore TTL policy
 // cannot read; `expireAt` is its Timestamp twin. Terminal rows only — a row that

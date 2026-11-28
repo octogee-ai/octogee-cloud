@@ -1319,9 +1319,11 @@ describe("the move an operator's give starts", () => {
     buildOperationCompletionUpdate({ op, result: failed(error), steps: [], now: 10_000 });
 
   it.each([notReady, noLiveRelease, `placement rejected for ${GATEWAY}: revision-not-ready`, blocked])(
-    "checks once a minute while the gateway answers: %s", (error) => {
+    "checks every five seconds while keeping the 30-minute readiness window: %s", (error) => {
       const update = complete(move({ checks: 6 }), error);
 
+      expect(OPERATOR_ISOLATED_GATEWAY_WAIT_MS).toBe(5_000);
+      expect(OPERATOR_ISOLATED_GATEWAY_WAIT_MS * MAX_OPERATOR_ISOLATED_GATEWAY_WAIT_ATTEMPTS).toBe(30 * 60_000);
       expect(update).toMatchObject({
         status: "pending", nextAttemptAt: 10_000 + OPERATOR_ISOLATED_GATEWAY_WAIT_MS,
         output: { isolatedGatewayReadinessChecks: 7 },
