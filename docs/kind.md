@@ -577,7 +577,8 @@ OpenRouter, so one user's agent replies through the LLM broker with a real
 provider key. A second job runs `kind-isolated-gateway.mjs` on its own cluster
 at the same time:
 
-1. It gives the user an isolated gateway that runs as a pod.
+1. It gives the user two projects on the shared gateway, Harbor and Tide, then
+   an isolated gateway that runs as a pod.
 2. It requires the gateway to mark its workspace identities ready for its
    boot (`workspace-identity-ready`), and the migration to succeed. Then it
    runs a Coach round trip whose broker call the ledger records from that
@@ -585,8 +586,14 @@ at the same time:
 3. It writes a file to the gateway's home, then parks and resumes the gateway.
    It requires the resumed boot, not the one before park, to mark its
    identities ready, and then checks the file.
-4. It returns the user to the shared gateway, waits for that migration to
+4. Harbor is archived before the park. After the resume, the job waits for
+   the gateway to detach Harbor's agent and removes the generated `SOUL.md`
+   from Tide's workspace there.
+5. It returns the user to the shared gateway, waits for that migration to
    succeed, retires the isolated one, and checks its home claim is gone.
+6. It requires the shared gateway to roster Tide's agent, restores Harbor and
+   requires Harbor's agent rostered there too, then moves the user out again to
+   a new isolated gateway and waits for that migration to succeed.
 
 The job reads the identity markers only while the gateway's container is
 running. It fails at once if they can't be read three times in a row while the
