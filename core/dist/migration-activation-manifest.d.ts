@@ -102,5 +102,6 @@ export declare function applyOpenClawActivationManifest(manifest: MigrationActiv
     routingActivationRequired: boolean;
     restartExistingAccountIds: string[];
     configNoop: boolean;
+    secretContractChanged: boolean;
 }>;
 export {};

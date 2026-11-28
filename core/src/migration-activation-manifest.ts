@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { IMPORT_ACTIVATION_PATCH_DEADLINE_MS } from "@octogee/shared/types/fleet-controller";
 import { parseAgentId } from "@octogee/shared/types/identity";
 import { mattermostAccountEndpointsForTarget } from "@octogee/shared/types/openclaw-mattermost-accounts";
@@ -767,6 +768,7 @@ export async function applyOpenClawActivationManifest(
   routingActivationRequired: boolean;
   restartExistingAccountIds: string[];
   configNoop: boolean;
+  secretContractChanged: boolean;
 }> {
   const privateProjects = privateProjectWorkspaceAgentIds(manifest);
   const authInheritanceAnchor = opts.authInheritanceAnchor;
@@ -795,6 +797,7 @@ export async function applyOpenClawActivationManifest(
   const startedAt = Date.now();
   let routingActivationRequired = false;
   let restartExistingAccountIds: string[] = [];
+  let secretContractChanged = false;
   const configPatch = await applyConfigPatch(
     {
       buildPatch: (current) => {
@@ -854,6 +857,19 @@ export async function applyOpenClawActivationManifest(
           manifest.slug,
           rebindPlatformEmbeddingRefs(orderedAgents),
         );
+        const staleAccounts = staleProjectAgentAccountNulls(
+          current,
+          manifest.slug,
+          activationAgents.map((entry) => entry.accountId),
+        );
+        const nextAccounts = mattermostAccountEndpointsForTarget(current, Object.fromEntries(
+          activationAgents.map((entry) => [entry.accountId, entry.mattermostAccount]),
+        ), opts.gatewayClass !== "isolated");
+        secretContractChanged = Object.keys(staleAccounts).length > 0 ||
+          Object.entries(nextAccounts).some(([accountId, account]) => {
+            const existing = currentAccounts[accountId];
+            return !isRecord(existing) || !isDeepStrictEqual(existing.botToken, (account as Record<string, unknown>).botToken);
+          });
         return {
           ...ownerCommandsSection(opts.ownerCommandsPatch, current),
           // openclaw rejects a multi-agent roster that declares no ownership.
@@ -869,14 +885,8 @@ export async function applyOpenClawActivationManifest(
           channels: {
             mattermost: {
               accounts: {
-                ...staleProjectAgentAccountNulls(
-                  current,
-                  manifest.slug,
-                  activationAgents.map((entry) => entry.accountId),
-                ),
-                ...mattermostAccountEndpointsForTarget(current, Object.fromEntries(
-                  activationAgents.map((entry) => [entry.accountId, entry.mattermostAccount]),
-                ), opts.gatewayClass !== "isolated"),
+                ...staleAccounts,
+                ...nextAccounts,
               },
             },
           },
@@ -902,5 +912,6 @@ export async function applyOpenClawActivationManifest(
     routingActivationRequired,
     restartExistingAccountIds,
     configNoop: configPatch.noop === true,
+    secretContractChanged: configPatch.noop !== true && secretContractChanged,
   };
 }

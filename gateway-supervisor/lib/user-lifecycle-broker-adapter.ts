@@ -101,7 +101,8 @@ import {
   userDefaultAgentId,
   resolveOpenClawStateDir,
 } from "./fleet-http-migration.js";
-import { OpenclawWireError, provisionDefaultAgentAutomation, type ConfigGetResult, type GatewayRpcClient } from "./gateway-rpc.js";
+import { OpenclawWireError, provisionDefaultAgentAutomation, type ConfigGetResult, type DegradedSecretOwner, type GatewayRpcClient } from "./gateway-rpc.js";
+import { CREW_IDENTITY } from "@octogee/core/crew";
 import { readPostgresAgentAnchor } from "@octogee/core/agent-postgres";
 import {
   cloneProjectRepo,
@@ -232,8 +233,8 @@ import { isIsolatedGatewayClassValue } from "@octogee/shared/types/glm";
 const WORKSPACE_ONLY_PROJECT_CHECKOUT_SCOPE: FleetBrokerProjectCheckoutScope = "workspace-only";
 
 const DEFAULT_AGENT = {
-  name: "Octo",
-  emoji: "",
+  name: CREW_IDENTITY.coach.name,
+  emoji: CREW_IDENTITY.coach.emoji,
   model: DEFAULT_USER_AGENT_MODEL_REF,
 };
 
@@ -999,16 +1000,78 @@ async function captureRoutingActivationBaseline(
   };
 }
 
+interface HotReloadSecretCheck {
+  slug: string;
+  agentIds: readonly string[];
+  accountIds: readonly string[];
+  configReloadedSecrets: boolean;
+}
+
+function degradedOwnerBelongsToOtherUser(
+  owner: DegradedSecretOwner,
+  slug: string,
+  accountIds: ReadonlySet<string>,
+  agentIds: ReadonlySet<string>,
+): boolean {
+  if (owner.ownerKind === "account") {
+    if (owner.ownerId.startsWith("mattermost:")) {
+      const accountId = owner.ownerId.slice("mattermost:".length);
+      return !accountIds.has(accountId) && accountId !== `${slug}-coach` && !accountId.startsWith(`${slug}-proj-`);
+    }
+    try {
+      const tuple = JSON.parse(owner.ownerId);
+      if (Array.isArray(tuple) && tuple.length === 2 && typeof tuple[0] === "string") {
+        const relative = path.relative(AGENTS_DIR, tuple[0]);
+        const ownerAgentId = relative.split(path.sep)[0];
+        if (ownerAgentId && ownerAgentId !== ".." && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+          return !agentIds.has(ownerAgentId) && !agentIdBelongsToSlug(ownerAgentId, slug);
+        }
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+  if (owner.ownerKind === "capability" && owner.ownerId.startsWith("memory-provider:")) {
+    const ownerAgentId = owner.ownerId.slice("memory-provider:".length);
+    return !agentIds.has(ownerAgentId) && !agentIdBelongsToSlug(ownerAgentId, slug);
+  }
+  return false;
+}
+
+async function secretsResolvedByConfigHotReload(
+  ctx: BrokerCtx,
+  logPrefix: string,
+  check: HotReloadSecretCheck | undefined,
+): Promise<boolean> {
+  if (!check?.configReloadedSecrets || !ctx.rpc.degradedSecretsStatus) return false;
+  try {
+    const owners = await ctx.rpc.degradedSecretsStatus();
+    const accounts = new Set(check.accountIds);
+    const agents = new Set(check.agentIds);
+    if (owners.some((owner) => !degradedOwnerBelongsToOtherUser(owner, check.slug, accounts, agents))) {
+      return false;
+    }
+    ctx.log(`${logPrefix} secrets.reload skipped — config hot-reload resolved secrets`);
+    return true;
+  } catch (error) {
+    ctx.log(`${logPrefix} ⚠ degraded secret status unreadable (${String(error)}); reloading secrets`);
+    return false;
+  }
+}
+
 async function reloadRuntimeSecretsIfChanged(
   ctx: BrokerCtx,
   logPrefix: string,
   ledger: SecretMaterialLedger,
   signal?: AbortSignal,
+  hotReloadSecretCheck?: HotReloadSecretCheck,
 ): Promise<void> {
   if (!ledger.changed) {
     ctx.log(`${logPrefix} secrets.reload skipped — no secret material changed`);
     return;
   }
+  if (await secretsResolvedByConfigHotReload(ctx, logPrefix, hotReloadSecretCheck)) return;
   const precedingWrites = ledger.reasons.join("; ");
   ctx.log(`${logPrefix} secrets.reload — ${precedingWrites}`);
   await reloadRuntimeSecrets(ctx, logPrefix, { precedingWrites, signal });
@@ -1702,12 +1765,17 @@ async function applyAddUserConfigPatch(
       signal: callOpts?.signal,
     },
   );
-  secretMaterial.note(
-    await mountPatchSecretMaterialReasons(ctx, configBefore, configPatch.noop === true),
-  );
+  const mountSecretReasons = await mountPatchSecretMaterialReasons(ctx, configBefore, configPatch.noop === true);
+  secretMaterial.note(mountSecretReasons);
   await settleProjectAgentActivations(ctx, {
     snapshot, projectAgents, channels, baseline: routingActivationBaseline,
     secretMaterial, signal: callOpts?.signal,
+    hotReloadSecretCheck: {
+      slug: snapshot.slug,
+      agentIds: brokerAgentIds,
+      accountIds: affectedAccountIds,
+      configReloadedSecrets: configPatch.noop !== true && mountSecretReasons.length > 0,
+    },
     activate: () => activateMattermostRoutingAfterConfigPatch(ctx.rpc, OPENCLAW_DIR, ctx.log, {
       accountIds: affectedAccountIds,
       baseline: routingActivationBaseline,
@@ -1736,11 +1804,12 @@ async function settleProjectAgentActivations(
     baseline: Readonly<Record<string, number>>;
     secretMaterial: SecretMaterialLedger;
     signal?: AbortSignal;
+    hotReloadSecretCheck?: HotReloadSecretCheck;
     activate(): Promise<void>;
   },
 ): Promise<void> {
   const errors: unknown[] = [];
-  await reloadRuntimeSecretsIfChanged(ctx, `[add:${input.snapshot.slug}]`, input.secretMaterial, input.signal);
+  await reloadRuntimeSecretsIfChanged(ctx, `[add:${input.snapshot.slug}]`, input.secretMaterial, input.signal, input.hotReloadSecretCheck);
   if (ctx.pendingRuntimeSecrets.get(input.snapshot.slug) === input.secretMaterial) {
     ctx.pendingRuntimeSecrets.delete(input.snapshot.slug);
   }
@@ -2457,6 +2526,12 @@ async function activateImportedUser(
     patch,
     secretMaterial,
     signal: opts.signal,
+    hotReloadSecretCheck: {
+      slug,
+      agentIds: activationManifestAgentIds(safeManifest),
+      accountIds,
+      configReloadedSecrets: patch.configNoop !== true && patch.secretContractChanged === true,
+    },
     configuredUserRouting: configuredBuilder
       ? { accountIds, baseline: routingActivationBaseline }
       : undefined,
@@ -2476,21 +2551,23 @@ async function settleActivatedImport(
       routingActivationRequired: boolean;
       restartExistingAccountIds?: string[];
       configNoop?: boolean;
+      secretContractChanged?: boolean;
     };
     secretMaterial: SecretMaterialLedger;
     signal?: AbortSignal;
+    hotReloadSecretCheck?: HotReloadSecretCheck;
     configuredUserRouting?: {
       accountIds: readonly string[];
       baseline: Readonly<Record<string, number>>;
     };
   },
 ): Promise<string | undefined> {
-  const { slug, patch, secretMaterial, signal, configuredUserRouting } = input;
+  const { slug, patch, secretMaterial, signal, hotReloadSecretCheck, configuredUserRouting } = input;
   try {
     const revisionWaitStartedAt = Date.now();
     await waitForAppliedConfigRevision(ctx.rpc, slug, { signal });
     ctx.log(`[import:${slug}] final config revision confirmed in ${Date.now() - revisionWaitStartedAt}ms`);
-    await reloadRuntimeSecretsIfChanged(ctx, `[import:${slug}]`, secretMaterial, signal);
+    await reloadRuntimeSecretsIfChanged(ctx, `[import:${slug}]`, secretMaterial, signal, hotReloadSecretCheck);
     if (ctx.pendingRuntimeSecrets.get(slug) === secretMaterial) ctx.pendingRuntimeSecrets.delete(slug);
     if (configuredUserRouting && patch.configNoop === true) {
       await activateMattermostRoutingAfterConfigPatch(
