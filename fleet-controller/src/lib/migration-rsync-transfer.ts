@@ -389,6 +389,48 @@ function measureTransfer(input: TransferInput, now: () => number, log: (message:
   };
 }
 
+function createMigrationEndpointResolver(deps: {
+  namespace: string;
+  runCommand: CommandRunner;
+  resolveGatewayVm?: (transportId: string) => Promise<GatewayVmAddress | null>;
+}) {
+  const byMigration = new Map<string, Map<string, GatewayEndpoint>>();
+  return {
+    async resolve(params: {
+      migrationId: string;
+      transportId: string;
+      requireReady: boolean;
+      allowCache: boolean;
+      override?: GatewayEndpoint;
+    }): Promise<GatewayEndpoint> {
+      if (params.override) return params.override;
+      const entries = byMigration.get(params.migrationId);
+      if (params.allowCache && entries) {
+        const cached = entries.get(`${params.transportId}\0ready`) ??
+          (params.requireReady ? undefined : entries.get(`${params.transportId}\0running`));
+        if (cached) return cached;
+      }
+      const resolved = await resolveGatewayEndpoint({
+        namespace: deps.namespace,
+        transportId: params.transportId,
+        runCommand: deps.runCommand,
+        requireReady: params.requireReady,
+        resolveGatewayVm: deps.resolveGatewayVm,
+      });
+      let bucket = byMigration.get(params.migrationId);
+      if (!bucket) {
+        bucket = new Map();
+        byMigration.set(params.migrationId, bucket);
+      }
+      bucket.set(`${params.transportId}\0${params.requireReady ? "ready" : "running"}`, resolved);
+      return resolved;
+    },
+    clear(migrationId: string): void {
+      byMigration.delete(migrationId);
+    },
+  };
+}
+
 export function createRsyncMigrationTransfer(
   deps: RSyncMigrationTransferDeps,
 ): MigrationClient["transferState"] {
@@ -400,6 +442,11 @@ export function createRsyncMigrationTransfer(
   const leaseMs = deps.leaseMs ?? DEFAULT_LEASE_MS;
   const log = deps.log ?? (() => undefined);
   const wait = deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const endpoints = createMigrationEndpointResolver({
+    namespace: deps.namespace,
+    runCommand,
+    resolveGatewayVm: deps.resolveGatewayVm,
+  });
 
   const control = <Resp>({ pathSuffix, ...options }: {
     transportId: string;
@@ -463,15 +510,10 @@ export function createRsyncMigrationTransfer(
     let targetPrepareAttempted = false;
     let targetPod: GatewayEndpoint | undefined;
     try {
+      const allowCache = claimed.attempt === 1;
       const [sourcePod, resolvedTargetPod] = await Promise.all([
-        resolveGatewayEndpoint({
-          namespace: deps.namespace,
-          transportId: fromTransportId,
-          runCommand,
-          requireReady: true,
-          resolveGatewayVm: deps.resolveGatewayVm,
-        }),
-        resolveTarget(),
+        endpoints.resolve({ migrationId: input.migrationId, transportId: fromTransportId, requireReady: true, allowCache }),
+        endpoints.resolve({ migrationId: input.migrationId, transportId: toTransportId, requireReady: false, allowCache, override: recoveryTarget }),
       ]);
       targetPod = resolvedTargetPod;
       const targetBaseUrl = podBaseUrl(targetPod.podIP, deps.fleetControllerPort);
@@ -544,6 +586,7 @@ export function createRsyncMigrationTransfer(
           : waitForTargetPodReady(runCommand, deps.namespace, resolvedTargetPod.name));
       }
       await finishTransferTask(deps.store, claimed, now);
+      if (mode === "final") endpoints.clear(input.migrationId);
       // The target committed the import and told us which post-commit step it could
       // not confirm. Aborting here would unmount work that landed and send the retry
       // back into the same reload, so the state stands and the reconcile converges it.
@@ -558,6 +601,7 @@ export function createRsyncMigrationTransfer(
       );
       return finished;
     } catch (err) {
+      endpoints.clear(input.migrationId);
       await assertTransferClaim(deps.store, claimed);
       if (targetPrepareAttempted && targetPod) {
         await control<ImportResponse>({

@@ -197,13 +197,34 @@ async function assertReturnTransferTargetAllowed(tx: PlatformStateTransaction, i
   }
 }
 
+const ownControllerRestartCache = new WeakMap<CommandRunner, Map<string, number>>();
+
+async function observeOwnControllerRestartCount(
+  deps: Pick<LeaseDeps, "runCommand" | "namespace">,
+  pod: ControllerPodIdentity,
+): Promise<number> {
+  const key = `${deps.namespace}\0${pod.name}\0${pod.uid}`;
+  let byPod = ownControllerRestartCache.get(deps.runCommand);
+  const cached = byPod?.get(key);
+  if (cached !== undefined) return cached;
+  const observed = await observeControllerPod(deps, pod);
+  if (observed.gone || !Number.isSafeInteger(observed.restartCount) || observed.restartCount! < 0) {
+    throw new Error("controller container identity unavailable");
+  }
+  if (!byPod) {
+    byPod = new Map();
+    ownControllerRestartCache.set(deps.runCommand, byPod);
+  }
+  byPod.set(key, observed.restartCount!);
+  return observed.restartCount!;
+}
+
 export async function claimTransferTask(deps: LeaseDeps, taskId: string, input: Parameters<MigrationClient["transferState"]>[0]): Promise<TransferClaim> {
   const scope = { ...input, gatewayId: input.toGatewayId, mode: input.mode ?? "pre" as const };
   const select = (tx: PlatformStateTransaction) => selectTransferTask(tx, taskId, scope);
   const observed = await deps.store.transaction({ label: "migration-transfer-lease.read", readOnly: true }, select);
   const recover = await claimRecovery(deps, observed.taskId, observed.existing);
-  const ownPod = deps.controllerPod ? await observeControllerPod(deps, deps.controllerPod) : undefined;
-  if (ownPod && (ownPod.gone || !Number.isSafeInteger(ownPod.restartCount) || ownPod.restartCount! < 0)) throw new Error("controller container identity unavailable");
+  const ownRestartCount = deps.controllerPod ? await observeOwnControllerRestartCount(deps, deps.controllerPod) : undefined;
   const attemptId = randomUUID();
   const claim = await deps.store.transaction({ label: "migration-transfer-lease.claim" }, async tx => {
     await assertReturnTransferTargetAllowed(tx, scope);
@@ -215,7 +236,7 @@ export async function claimTransferTask(deps: LeaseDeps, taskId: string, input: 
     }
     const taskInput = { ...input, migrationId };
     assertTaskIdentity(existing, taskId, taskInput);
-    const task = runningTask(deps, { taskId, input: taskInput, existing, attemptId, now, restartCount: ownPod?.restartCount });
+    const task = runningTask(deps, { taskId, input: taskInput, existing, attemptId, now, restartCount: ownRestartCount });
     await tx.migrationTasks.claim(task, existing?.revision ?? "absent");
     return { taskId, attempt: task.attempt, attemptId, workerId: deps.workerId };
   });

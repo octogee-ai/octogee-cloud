@@ -1026,6 +1026,88 @@ describe("createRsyncMigrationTransfer", () => {
     expect(fetchCalls.some((url) => url.includes("/push-rsync-state/"))).toBe(false);
     expect(fetchCalls).toContain(`http://${TARGET_POD_IP}:3003/abort-rsync-import/gw-to`);
   });
+
+  it("caches own controller pod identity and reuses resolved pod endpoints across keys, pre, and final", async () => {
+    const store: Store = {};
+    const fetchCalls: string[] = [];
+    const kubectlCalls: Array<{ command: string; args: string[] }> = [];
+    const baseRunner = makeCommandRunner(kubectlCalls);
+    const runCommand: CommandRunner = async (command, args, opts) => {
+      if (args[2] === "get" && args[3] === "pod" && args[4] === "glm-controller-live") {
+        kubectlCalls.push({ command, args });
+        return {
+          code: 0,
+          stderr: "",
+          stdout: JSON.stringify({
+            metadata: { name: "glm-controller-live", uid: "ctrl-uid-1" },
+            status: { containerStatuses: [{ name: "glm-controller", restartCount: 0 }] },
+          }),
+        };
+      }
+      return baseRunner(command, args, opts);
+    };
+    const transfer = createRsyncMigrationTransfer({
+      store: makeStore(store),
+      namespace: "octogee-test",
+      privateKey: FLEET_KEY_PAIR.privateKey,
+      fleetControllerPort: FLEET_CONTROLLER_PORT,
+      resolveGatewayUrl: (id) => `http://${id}`,
+      fetch: makeFetch(fetchCalls),
+      runCommand,
+      controllerPod: { name: "glm-controller-live", uid: "ctrl-uid-1" },
+      now: () => Date.now(),
+      workerId: "worker-1",
+    });
+
+    for (const mode of ["keys", "pre", "final"] as const) {
+      await expect(transfer({
+        migrationId: "mig-cache-1",
+        fromGatewayId: "gw-from",
+        toGatewayId: "gw-to",
+        slug: "alice",
+        mode,
+        includeActivationManifest: mode === "final",
+      })).resolves.toMatchObject({ imported: true });
+    }
+
+    const ownPodGets = kubectlCalls.filter((c) => c.args[2] === "get" && c.args[3] === "pod");
+    const gatewayPodGets = kubectlCalls.filter((c) => c.args[2] === "get" && c.args[3] === "pods");
+    expect(ownPodGets).toHaveLength(1);
+    expect(gatewayPodGets).toHaveLength(2);
+  });
+
+  it("invalidates cached migration endpoints after a failed transfer so retries re-resolve pods", async () => {
+    const store: Store = {};
+    const kubectlCalls: Array<{ command: string; args: string[] }> = [];
+    const baseFetch = makeFetch([]);
+    let failNextPre = true;
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/push-rsync-state/") && failNextPre && String(init?.body ?? "").includes('"mode":"pre"')) {
+        failNextPre = false;
+        return new Response("pod restarted", { status: 503 });
+      }
+      return baseFetch(input, init);
+    }) as typeof fetch;
+    const transfer = createRsyncMigrationTransfer({
+      store: makeStore(store),
+      namespace: "octogee-test",
+      privateKey: FLEET_KEY_PAIR.privateKey,
+      fleetControllerPort: FLEET_CONTROLLER_PORT,
+      resolveGatewayUrl: (id) => `http://${id}`,
+      fetch: fetchImpl,
+      runCommand: makeCommandRunner(kubectlCalls),
+      now: () => Date.now(),
+      workerId: "worker-1",
+    });
+
+    await transfer({ migrationId: "mig-evict", fromGatewayId: "gw-from", toGatewayId: "gw-to", slug: "alice", mode: "keys" });
+    await expect(transfer({ migrationId: "mig-evict", fromGatewayId: "gw-from", toGatewayId: "gw-to", slug: "alice", mode: "pre" })).rejects.toThrow();
+    await transfer({ migrationId: "mig-evict", fromGatewayId: "gw-from", toGatewayId: "gw-to", slug: "alice", mode: "pre" });
+
+    const gatewayPodGets = kubectlCalls.filter((c) => c.args[2] === "get" && c.args[3] === "pods");
+    expect(gatewayPodGets).toHaveLength(4);
+  });
 });
 
 describe("createRsyncMigrationTransfer with a VM target", () => {
