@@ -41,7 +41,6 @@ const SECRET_PATTERNS = [
   [/\b([\w-]*(?:token|secret|password|passwd|api[_-]?key)[\w-]*)(["']?\s*[:=]\s*["']?)[^\s"',&}]+/gi, "$1$2[redacted]"],
 ];
 
-export const PROJECT_SLUG = "harbor";
 const OPENCLAW_CONFIG = "/home/node/.openclaw/system_config/openclaw.json";
 const PROJECT_TIMEOUT_MS = 600_000;
 const PROJECT_AGENT_STORE_SQL = `SELECT gateway_id FROM platform.agent_stores WHERE uid = :'uid' AND agent_id = :'agent';
@@ -50,8 +49,12 @@ const ARCHIVE_PROJECT_SQL = `UPDATE platform.workspace_projects SET commercial_l
 WHERE owner_uid = :'uid' AND project_slug = :'project';
 `;
 
-export function projectAgentId(user) {
-  return `octogee-${user}-proj-${PROJECT_SLUG}-coach`;
+export function projectSlug(now) {
+  return `harbor${now.toString(36)}`;
+}
+
+export function projectAgentId(user, slug) {
+  return `octogee-${user}-proj-${slug}-coach`;
 }
 
 export function configuresAgent(config, agentId) {
@@ -276,12 +279,13 @@ async function giveProject(deps, options, uid) {
   const issued = deps.fleet(["user", "issue-passwords", options.user, "--apply"]).response;
   const chat = await deps.signIn(issued.chat.username, issued.chat.password);
   const api = await deps.platformApi(chat.token);
-  await api.post("/api/projects", { name: "Harbor", slug: PROJECT_SLUG });
-  const agentId = projectAgentId(options.user);
+  const slug = projectSlug(deps.clock.now());
+  await api.post("/api/projects", { name: "Harbor", slug });
+  const agentId = projectAgentId(options.user, slug);
   await waitFor(() => deps.sql(PROJECT_AGENT_STORE_SQL, { uid, agent: agentId }).trim() === options.gateway,
     { timeoutMs: PROJECT_TIMEOUT_MS, intervalMs: 10_000, label: `${agentId}'s store to be recorded on ${options.gateway}` }, deps.clock);
-  deps.log(`Gave ${options.user} project ${PROJECT_SLUG}; ${agentId} has a store on ${options.gateway}`);
-  return agentId;
+  deps.log(`Gave ${options.user} project ${slug}; ${agentId} has a store on ${options.gateway}`);
+  return { slug, agentId };
 }
 
 async function waitForDetachedAgent(deps, gatewayId, agentId) {
@@ -296,7 +300,7 @@ export async function run(deps, options) {
   const { log } = deps;
   pinModel(deps, options);
   const user = await placeOnSharedGateway(deps, options);
-  const project = { uid: user.id, agentId: await giveProject(deps, options, user.id) };
+  const project = { uid: user.id, ...await giveProject(deps, options, user.id) };
 
   deps.setSizingProfile(POD_SIZING_PROFILE, POD_PROFILE);
   log(`Set sizing profile ${POD_SIZING_PROFILE} to a pod with a ${POD_PROFILE.computer.homeSizeGiB} GiB home`);
@@ -321,8 +325,8 @@ async function serveParkResumeAndRetire(deps, options, gatewayId, operationId, p
   requireBoundHome(deps, gatewayId);
   const roundTrip = await coachRoundTrip(deps, options,
     { sql: GATEWAY_LEDGER_SQL, variables: { gateway: gatewayId }, caller: `isolated gateway ${gatewayId}` });
-  deps.sql(ARCHIVE_PROJECT_SQL, { uid: project.uid, project: PROJECT_SLUG });
-  log(`Archived ${options.user}'s project ${PROJECT_SLUG} while they are on ${gatewayId}`);
+  deps.sql(ARCHIVE_PROJECT_SQL, { uid: project.uid, project: project.slug });
+  log(`Archived ${options.user}'s project ${project.slug} while they are on ${gatewayId}`);
 
   const marker = `${gatewayId}-${clock.now()}`;
   deps.writeGatewayFile(gatewayId, HOME_MARKER, marker);

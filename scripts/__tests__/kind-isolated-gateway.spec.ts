@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { isValidProjectId } from "@octogee/shared/types/identity";
 import {
   IDENTITY_FAILURE,
   POD_PROFILE,
   identityReady,
   lastIdentityFailure,
+  projectSlug,
   redactSecrets,
   run,
 } from "../ops/kind-isolated-gateway.mjs";
@@ -40,7 +42,7 @@ const MIGRATION_BACK = "op-back";
 
 const RESUMED_PROCESS_STARTS_MS = 30_000;
 const CONFIG_FILE = "/home/node/.openclaw/system_config/openclaw.json";
-const PROJECT_AGENT = "octogee-lin-proj-harbor-coach";
+const PROJECT_AGENT = "octogee-lin-proj-harbor0-coach";
 
 function cluster(scenario: Scenario = {}) {
   let now = 0;
@@ -178,9 +180,9 @@ function cluster(scenario: Scenario = {}) {
       return {
         post: async (path: string, body: unknown) => {
           events.push(`api post ${path}`);
-          expect(body).toEqual({ name: "Harbor", slug: "harbor" });
+          expect(body).toEqual({ name: "Harbor", slug: "harbor0" });
           projectCreated = true;
-          return { workspaceId: "lin", slug: "harbor" };
+          return { workspaceId: "lin", slug: "harbor0" };
         },
       };
     },
@@ -269,8 +271,15 @@ describe("kind isolated gateway smoke", () => {
     const back = eventIndex(events, "user migrate lin", toIsolated + 1);
     expect(events.lastIndexOf("config read")).toBeGreaterThan(eventIndex(events, `gateway resume ${ISOLATED}`));
     expect(events.lastIndexOf("config read")).toBeLessThan(back);
-    expect(sql.find(entry => entry.sql.includes("commercial_lifecycle_status"))?.variables).toEqual({ uid: "uid-1", project: "harbor" });
+    expect(sql.find(entry => entry.sql.includes("commercial_lifecycle_status"))?.variables).toEqual({ uid: "uid-1", project: "harbor0" });
     expect(sql.find(entry => entry.sql.includes("platform.agent_stores"))?.variables).toEqual({ uid: "uid-1", agent: PROJECT_AGENT });
+  });
+
+  it("gives each run a new project slug the platform API accepts, so a rerun on the same cluster does not collide", () => {
+    const first = projectSlug(Date.UTC(2026, 10, 27, 23, 0, 0));
+    const second = projectSlug(Date.UTC(2026, 10, 27, 23, 0, 1));
+    expect(first).not.toBe(second);
+    expect([first, second, projectSlug(Date.UTC(2099, 0, 1))].every(isValidProjectId)).toBe(true);
   });
 
   it("does not give the user an isolated gateway before their project agent has a store on the shared gateway", async () => {
