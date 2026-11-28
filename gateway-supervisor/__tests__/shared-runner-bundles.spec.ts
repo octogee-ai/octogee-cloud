@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -26,12 +26,16 @@ function esbuildCommandArguments(outdirFlag: string): string[] {
 }
 
 const workspace = mkdtempSync(join(tmpdir(), "shared-runner-bundles-"));
-afterAll(() => rmSync(workspace, { recursive: true, force: true }));
+const resolvableWorkspace = mkdtempSync(join(SCRIPTS, ".shared-runner-bundles-"));
+afterAll(() => {
+  rmSync(workspace, { recursive: true, force: true });
+  rmSync(resolvableWorkspace, { recursive: true, force: true });
+});
 
-function buildBundleGroup(outdirFlag: string, subdir: string): Metafile {
-  const metafile = join(workspace, `${subdir}.meta.json`);
+function buildBundleGroup(outdirFlag: string, subdir: string, root = workspace): Metafile {
+  const metafile = join(root, `${subdir}.meta.json`);
   const args = esbuildCommandArguments(outdirFlag).map(arg =>
-    arg.startsWith("--outdir=") ? `--outdir=${join(workspace, subdir)}` : arg.replace(IMAGE_SCRIPTS, `${SCRIPTS}/`));
+    arg.startsWith("--outdir=") ? `--outdir=${join(root, subdir)}` : arg.replace(IMAGE_SCRIPTS, `${SCRIPTS}/`));
   execFileSync(resolve(SCRIPTS, "node_modules/.bin/esbuild"), [...args, `--metafile=${metafile}`, "--log-level=error"], { cwd: SCRIPTS });
   return JSON.parse(readFileSync(metafile, "utf8")) as Metafile;
 }
@@ -53,6 +57,29 @@ function installAfterLoading(specifiers: string[]) {
     timeout: 60_000,
   });
 }
+
+describe("bundled pre-boot", () => {
+  it("patches openclaw.json when the image's runner starts the bundle", () => {
+    buildBundleGroup(BUNDLED_ENTRYPOINTS_OUTDIR, "bundled-entrypoints", resolvableWorkspace);
+    const home = mkdtempSync(join(tmpdir(), "bundled-pre-boot-"));
+    try {
+      const config = join(home, "openclaw.json");
+      copyFileSync(resolve(SCRIPTS, "../gateway/openclaw.template.json"), config);
+      const result = spawnSync(process.execPath, [join(resolvableWorkspace, "bundled-entrypoints", "pre-boot-config.mjs")], {
+        cwd: SCRIPTS,
+        env: { PATH: process.env.PATH, HOME: home, OPENCLAW_DIR: home, OPENCLAW_CONFIG_PATH: config, GATEWAY_CLASS: "shared" },
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("openclaw.json patched");
+      const patched = JSON.parse(readFileSync(config, "utf8")) as { agents: { defaults: { skipOptionalBootstrapFiles?: string[] } } };
+      expect(patched.agents.defaults.skipOptionalBootstrapFiles).toContain("IDENTITY.md");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
 
 describe("shared runner bundles", () => {
   const sharedMetafile = buildBundleGroup(SHARED_RUNNERS_OUTDIR, "shared-runners");

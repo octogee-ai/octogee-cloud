@@ -3,6 +3,7 @@ const runtimeLogger = createServiceLogger("pre-boot-config");
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { agentIdsFromConfig } from "../lib/byosub-restore.js";
 import {
   materializeBrokerProfilesForAgents,
@@ -1050,7 +1051,7 @@ async function main(): Promise<void> {
   }
 }
 
-const isEntrypoint = process.argv[1] && process.argv[1].endsWith("pre-boot-config.ts") || process.argv[1]?.endsWith("pre-boot-config.js");
+const isEntrypoint = Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]!).href;
 function exitPreBootWithError(error: unknown): never {
   runtimeLogger.error(`[pre-boot] Fatal: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
