@@ -2207,7 +2207,9 @@ async function restartIsolatedPrelaunch(
 ): Promise<SurgeOpenClawProcessGateState> {
   return openClawRuntimeUpdateGuard.run(async () => {
     await input.prepareIsolatedPrelaunch(input.request.slug);
-    return input.processGate.permitNormal();
+    return process.env.GATEWAY_RUNTIME_KIND === "cluster"
+      ? input.processGate.permitNormal({ awaitReady: false })
+      : input.processGate.permitNormal();
   }, { label: `prelaunch:${input.request.slug}` });
 }
 
