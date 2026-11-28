@@ -5,7 +5,7 @@ set -e
 GATEWAY_CLASS_EFFECTIVE="$(dual_read_gateway_class "${GATEWAY_CLASS:-shared}")"
 
 if [ "$GATEWAY_CLASS_EFFECTIVE" = shared ] && { [ -e /etc/octogee/shared-maintenance-startup.json ] || [ -L /etc/octogee/shared-maintenance-startup.json ]; }; then
-  /octogee/scripts/node_modules/.bin/tsx /octogee/scripts/entrypoints/shared-maintenance-startup.ts
+  /octogee/gateway/bundled-entrypoint-runner.sh /octogee/scripts/entrypoints/shared-maintenance-startup.ts
 fi
 
 if [ "$GATEWAY_CLASS_EFFECTIVE" = isolated ] && [ "${GATEWAY_COMPUTER_DESKTOP:-}" = x11 ] && [ "${OCTOGEE_X11_SESSION:-0}" != 1 ]; then
@@ -27,7 +27,7 @@ if [ "${GATEWAY_EPHEMERAL_HOME:-}" = "true" ]; then
   rm -f "$OPENCLAW_DIR/prestop-finished"
 fi
 TEMPLATES_DIR="${OCTOGEE_TEMPLATES_DIR:-/octogee/templates}"
-TSX=/octogee/scripts/node_modules/.bin/tsx
+TSX=/octogee/gateway/bundled-entrypoint-runner.sh
 case "$GATEWAY_CLASS_EFFECTIVE" in
   shared|isolated) ;;
   *) echo "FATAL: GATEWAY_CLASS must be shared or isolated" >&2; exit 1 ;;

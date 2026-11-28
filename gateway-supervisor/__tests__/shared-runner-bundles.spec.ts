@@ -6,30 +6,32 @@ import { afterAll, describe, expect, it } from "vitest";
 
 const SCRIPTS = resolve(import.meta.dirname, "..");
 const DOCKERFILE = resolve(SCRIPTS, "../gateway/Dockerfile");
+const ENTRYPOINT = resolve(SCRIPTS, "../gateway/entrypoint.sh");
 const IMAGE_SCRIPTS = "/octogee/scripts/";
 const IMAGE_ESBUILD = `${IMAGE_SCRIPTS}node_modules/.bin/esbuild`;
 const SHARED_RUNNERS_OUTDIR = `--outdir=${IMAGE_SCRIPTS}shared-runners`;
+const BUNDLED_ENTRYPOINTS_OUTDIR = `--outdir=${IMAGE_SCRIPTS}bundled-entrypoints`;
 
 interface Metafile {
   outputs: Record<string, { entryPoint?: string; imports: { path: string; kind: string; external?: boolean }[] }>;
 }
 
-function sharedRunnerBuildArguments(): string[] {
+function esbuildCommandArguments(outdirFlag: string): string[] {
   const command = readFileSync(DOCKERFILE, "utf8")
     .replace(/\\\n\s*/g, " ")
     .split("\n")
-    .find(line => line.startsWith(`RUN ${IMAGE_ESBUILD} `) && line.includes(SHARED_RUNNERS_OUTDIR));
-  if (!command) throw new Error(`No shared runner esbuild command in ${DOCKERFILE}`);
+    .find(line => line.startsWith(`RUN ${IMAGE_ESBUILD} `) && line.includes(outdirFlag));
+  if (!command) throw new Error(`No esbuild command for ${outdirFlag} in ${DOCKERFILE}`);
   return command.slice(`RUN ${IMAGE_ESBUILD} `.length).trim().split(/\s+/);
 }
 
 const workspace = mkdtempSync(join(tmpdir(), "shared-runner-bundles-"));
 afterAll(() => rmSync(workspace, { recursive: true, force: true }));
 
-function buildSharedRunners(): Metafile {
-  const metafile = join(workspace, "meta.json");
-  const args = sharedRunnerBuildArguments().map(arg =>
-    arg.startsWith("--outdir=") ? `--outdir=${join(workspace, "shared-runners")}` : arg.replace(IMAGE_SCRIPTS, `${SCRIPTS}/`));
+function buildBundleGroup(outdirFlag: string, subdir: string): Metafile {
+  const metafile = join(workspace, `${subdir}.meta.json`);
+  const args = esbuildCommandArguments(outdirFlag).map(arg =>
+    arg.startsWith("--outdir=") ? `--outdir=${join(workspace, subdir)}` : arg.replace(IMAGE_SCRIPTS, `${SCRIPTS}/`));
   execFileSync(resolve(SCRIPTS, "node_modules/.bin/esbuild"), [...args, `--metafile=${metafile}`, "--log-level=error"], { cwd: SCRIPTS });
   return JSON.parse(readFileSync(metafile, "utf8")) as Metafile;
 }
@@ -53,8 +55,10 @@ function installAfterLoading(specifiers: string[]) {
 }
 
 describe("shared runner bundles", () => {
-  const metafile = buildSharedRunners();
-  const runners = Object.values(metafile.outputs).filter(output => output.entryPoint);
+  const sharedMetafile = buildBundleGroup(SHARED_RUNNERS_OUTDIR, "shared-runners");
+  const prebootMetafile = buildBundleGroup(BUNDLED_ENTRYPOINTS_OUTDIR, "bundled-entrypoints");
+  const runners = Object.values(sharedMetafile.outputs).filter(output => output.entryPoint);
+  const prebootEntries = Object.values(prebootMetafile.outputs).filter(output => output.entryPoint);
 
   it("builds the shared runners the image starts", () => {
     expect(runners.map(output => output.entryPoint)).toEqual(expect.arrayContaining([
@@ -63,7 +67,21 @@ describe("shared runner bundles", () => {
     ]));
   });
 
-  it.each(runners.map(output => [output.entryPoint!, output] as const))(
+  it("bundles every TypeScript entrypoint invoked by gateway/entrypoint.sh", () => {
+    const entrypointSource = readFileSync(ENTRYPOINT, "utf8");
+    const invoked = new Set<string>();
+    for (const match of entrypointSource.matchAll(/\/octogee\/scripts\/(entrypoints\/[A-Za-z0-9_.-]+\.ts)\b/g)) {
+      invoked.add(match[1]!);
+    }
+    const bundled = new Set([
+      ...runners.map(output => output.entryPoint!),
+      ...prebootEntries.map(output => output.entryPoint!),
+    ]);
+    const unbundled = [...invoked].filter(entry => !bundled.has(entry)).sort();
+    expect(unbundled).toEqual([]);
+  });
+
+  it.each([...runners, ...prebootEntries].map(output => [output.entryPoint!, output] as const))(
     "%s loads its hoisted package imports without reading the deployment targets an installing main sets",
     (_entry, output) => {
       const hoisted = output.imports.filter(entry => entry.external && entry.kind === "import-statement").map(entry => entry.path);

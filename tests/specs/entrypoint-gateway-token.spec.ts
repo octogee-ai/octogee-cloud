@@ -266,6 +266,41 @@ describe("gateway/entrypoint.sh — in-pod runner boundary", () => {
     }
   });
 
+  it("dispatches pre-bundled entrypoints directly via node and falls back to tsx when unbundled", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bundled-entrypoint-runner-"));
+    try {
+      const binDir = path.join(tmp, "bin");
+      const scriptsRoot = path.join(tmp, "scripts");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(scriptsRoot, "bundled-entrypoints"), { recursive: true });
+      fs.mkdirSync(path.join(scriptsRoot, "shared-runners"), { recursive: true });
+      fs.mkdirSync(path.join(scriptsRoot, "node_modules/.bin"), { recursive: true });
+      fs.writeFileSync(path.join(binDir, "node"), '#!/bin/sh\nprintf "node:%s\\n" "$*"\n', { mode: 0o700 });
+      fs.writeFileSync(path.join(scriptsRoot, "node_modules/.bin/tsx"), '#!/bin/sh\nprintf "tsx:%s\\n" "$*"\n', { mode: 0o700 });
+      fs.writeFileSync(path.join(scriptsRoot, "bundled-entrypoints/pre-boot-config.mjs"), "");
+      fs.writeFileSync(path.join(scriptsRoot, "shared-runners/provisioner.mjs"), "");
+      const wrapper = path.resolve(path.dirname(ENTRYPOINT), "bundled-entrypoint-runner.sh");
+      const run = (target: string, ...extra: string[]) => spawnSync("/bin/sh", [wrapper, target, ...extra], {
+        encoding: "utf8",
+        env: { PATH: `${binDir}:/usr/bin:/bin` },
+      });
+
+      const preboot = run(`${scriptsRoot}/entrypoints/pre-boot-config.ts`, "--flag");
+      expect(preboot.status, preboot.stderr).toBe(0);
+      expect(preboot.stdout.trim()).toBe(`node:${scriptsRoot}/bundled-entrypoints/pre-boot-config.mjs --flag`);
+
+      const runner = run(`${scriptsRoot}/entrypoints/provisioner.ts`, "arg1");
+      expect(runner.status, runner.stderr).toBe(0);
+      expect(runner.stdout.trim()).toBe(`node:${scriptsRoot}/shared-runners/provisioner.mjs arg1`);
+
+      const unbundled = run(`${scriptsRoot}/entrypoints/unbundled-script.ts`, "x");
+      expect(unbundled.status, unbundled.stderr).toBe(0);
+      expect(unbundled.stdout.trim()).toBe(`tsx:${scriptsRoot}/entrypoints/unbundled-script.ts x`);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
 });
 
 describe("gateway/entrypoint.sh — shell var export contract (subprocess visibility)", () => {
