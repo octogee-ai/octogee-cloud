@@ -64,15 +64,33 @@ export function configSecretMaterialChangeReasons(before: unknown, after: unknow
   return reasons;
 }
 
+export type SecretMaterialReason = string | readonly string[] | null | undefined;
+
 export interface SecretMaterialLedger {
   readonly reasons: readonly string[];
   readonly changed: boolean;
-  note(reason: string | readonly string[] | null | undefined): void;
+  readonly authStoreChanged: boolean;
+  note(reason: SecretMaterialReason): void;
   noteIf(changed: boolean, reason: string): void;
+  noteAuthStore(reason: SecretMaterialReason): void;
+  noteAuthStoreIf(changed: boolean, reason: string): void;
 }
 
 export function createSecretMaterialLedger(): SecretMaterialLedger {
   const reasons: string[] = [];
+  let authStoreChanged = false;
+  const record = (reason: SecretMaterialReason): boolean => {
+    if (reason === null || reason === undefined) return false;
+    if (typeof reason === "string") {
+      if (reason.length === 0) return false;
+      reasons.push(reason);
+      return true;
+    }
+    const entries = reason.filter((entry) => entry.length > 0);
+    if (entries.length === 0) return false;
+    reasons.push(...entries);
+    return true;
+  };
   return {
     get reasons() {
       return reasons;
@@ -80,16 +98,20 @@ export function createSecretMaterialLedger(): SecretMaterialLedger {
     get changed() {
       return reasons.length > 0;
     },
+    get authStoreChanged() {
+      return authStoreChanged;
+    },
     note(reason) {
-      if (reason === null || reason === undefined) return;
-      if (typeof reason === "string") {
-        if (reason.length > 0) reasons.push(reason);
-        return;
-      }
-      reasons.push(...reason.filter((entry) => entry.length > 0));
+      record(reason);
     },
     noteIf(changed, reason) {
-      if (changed) reasons.push(reason);
+      if (changed) record(reason);
+    },
+    noteAuthStore(reason) {
+      if (record(reason)) authStoreChanged = true;
+    },
+    noteAuthStoreIf(changed, reason) {
+      if (changed && record(reason)) authStoreChanged = true;
     },
   };
 }

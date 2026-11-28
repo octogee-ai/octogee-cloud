@@ -138,7 +138,25 @@ describe("createSecretMaterialLedger", () => {
     const ledger = createSecretMaterialLedger();
     ledger.noteIf(false, "OAuth store restored");
     expect(ledger.changed).toBe(false);
-    ledger.noteIf(true, "OAuth store restored");
-    expect(ledger.reasons).toEqual(["OAuth store restored"]);
+    expect(ledger.authStoreChanged).toBe(false);
+    ledger.noteIf(true, "Mattermost account secrets file changed");
+    expect(ledger.authStoreChanged).toBe(false);
+    expect(ledger.reasons).toEqual(["Mattermost account secrets file changed"]);
+  });
+
+  it("tracks auth-store changes separately from config-level secret material", () => {
+    const ledger = createSecretMaterialLedger();
+    ledger.note("SecretRef added at channels.mattermost.accounts.lin-coach.botToken");
+    ledger.noteAuthStore(null);
+    ledger.noteAuthStoreIf(false, "model credential OAuth store restored");
+    expect(ledger.authStoreChanged).toBe(false);
+
+    ledger.noteAuthStore("broker model profiles materialized for 1 agent");
+    expect(ledger.authStoreChanged).toBe(true);
+    expect(ledger.changed).toBe(true);
+    expect(ledger.reasons).toEqual([
+      "SecretRef added at channels.mattermost.accounts.lin-coach.botToken",
+      "broker model profiles materialized for 1 agent",
+    ]);
   });
 });

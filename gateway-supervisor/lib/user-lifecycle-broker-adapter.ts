@@ -853,7 +853,7 @@ async function materializeUserBrokerProfiles(
       : {}),
   });
   if (materialized.materialized > 0) {
-    secretMaterial.note(brokerProfileMaterializationReason(materialized.materialized));
+    secretMaterial.noteAuthStore(brokerProfileMaterializationReason(materialized.materialized));
     logFn(`${logPrefix} broker model profiles materialized before config hot-reload`);
   }
   if (materialized.deferred.length > 0) {
@@ -1007,6 +1007,7 @@ interface HotReloadSecretCheck {
   agentIds: readonly string[];
   accountIds: readonly string[];
   configReloadedSecrets: boolean;
+  awaitConfigRevision?: boolean;
 }
 
 function degradedAuthStoreAgentId(ownerId: string): string | null {
@@ -1046,9 +1047,13 @@ async function secretsResolvedByConfigHotReload(
   ctx: BrokerCtx,
   logPrefix: string,
   check: HotReloadSecretCheck | undefined,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!check?.configReloadedSecrets || !ctx.rpc.degradedSecretsStatus) return false;
   try {
+    if (check.awaitConfigRevision) {
+      await waitForAppliedConfigRevision(ctx.rpc, check.slug, { signal });
+    }
     const owners = await ctx.rpc.degradedSecretsStatus();
     const accounts = new Set(check.accountIds);
     const agents = new Set(check.agentIds);
@@ -1074,7 +1079,7 @@ async function reloadRuntimeSecretsIfChanged(
     ctx.log(`${logPrefix} secrets.reload skipped — no secret material changed`);
     return;
   }
-  if (await secretsResolvedByConfigHotReload(ctx, logPrefix, hotReloadSecretCheck)) return;
+  if (!ledger.authStoreChanged && (await secretsResolvedByConfigHotReload(ctx, logPrefix, hotReloadSecretCheck, signal))) return;
   const precedingWrites = ledger.reasons.join("; ");
   ctx.log(`${logPrefix} secrets.reload — ${precedingWrites}`);
   await reloadRuntimeSecrets(ctx, logPrefix, { precedingWrites, signal });
@@ -1778,6 +1783,7 @@ async function applyAddUserConfigPatch(
       agentIds: brokerAgentIds,
       accountIds: affectedAccountIds,
       configReloadedSecrets: configPatch.noop !== true && mountSecretReasons.length > 0,
+      awaitConfigRevision: true,
     },
     activate: () => activateMattermostRoutingAfterConfigPatch(ctx.rpc, OPENCLAW_DIR, ctx.log, {
       accountIds: affectedAccountIds,
@@ -2474,7 +2480,7 @@ async function activateImportedUser(
     const restore = await restoreModelCredentialOauthStoreForSlug(slug, {
       logFn: (message) => ctx.log(`[import:${slug}] ${message}`),
     });
-    secretMaterial.noteIf(restore.restored, "model credential OAuth store restored");
+    secretMaterial.noteAuthStoreIf(restore.restored, "model credential OAuth store restored");
   }
   const accountIds = [
     safeManifest.accountId,
