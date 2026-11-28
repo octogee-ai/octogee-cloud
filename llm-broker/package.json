@@ -42,7 +42,7 @@
     "@octogee/core": "file:../core",
     "@octogee/shared": "file:../shared",
     "express": "^5.3.0",
-    "express-rate-limit": "^8.7.3",
+    "express-rate-limit": "^8.7.5",
     "google-auth-library": "^11.0.2"
   },
   "devDependencies": {
